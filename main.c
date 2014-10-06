@@ -40,9 +40,12 @@ kern_return_t MyKextStart(kmod_info_t * ki, void * d) {
   printf("MyKext has started.\n");
 
   g_kvm_major = cdevsw_add(-1, &kvm_functions);
+  if (g_kvm_major < 0) {
+    return KMOD_RETURN_FAILURE;
+  }
   g_kvm_ctl = devfs_make_node(makedev(g_kvm_major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0600, "kvm");
 
-  return KERN_SUCCESS;
+  return KMOD_RETURN_SUCCESS;
 }
  
 kern_return_t MyKextStop(kmod_info_t * ki, void * d) {
