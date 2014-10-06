@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/bin/bash -e
+
 mkdir -p kvm.kext/Contents/MacOS
 gcc -static main.c -o kvm.kext/Contents/MacOS/kvm -fno-builtin -nostdlib -lkmod -r -I/System/Library/Frameworks/Kernel.framework/Headers -Wall -Xlinker -kext
 
