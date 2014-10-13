@@ -15,6 +15,9 @@
 //#include "ioctl.h"
 #include <sys/ioccom.h>
 
+#define KVM_FEATURE_PV_EOI 0
+#define KVM_FEATURE_CLOCKSOURCE 0
+#define KVM_FEATURE_CLOCKSOURCE2 0
 
 #include <stdint.h>
 #define __u8 uint8_t
