@@ -2,19 +2,25 @@
 #include <mach/mach_types.h>
 #include <sys/conf.h>
 #include <miscfs/devfs/devfs.h>
+
 #include "kvm.h"
 
 static int kvm_dev_open(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
-  return -1;
+  return 0;
 }
 
 static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
-  return -1;
+  return 0;
 }
 
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   /* all the real work happens here */
-  return -1;
+  switch (iCmd) {
+    case KVM_GET_API_VERSION:
+      return KVM_API_VERSION;
+    default:
+      return -1;
+  }
 }
 
 static struct cdevsw kvm_functions = {

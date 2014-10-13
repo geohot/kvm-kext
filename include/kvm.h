@@ -12,6 +12,9 @@
 //#include <linux/ioctl.h>
 //#include <asm/kvm.h>
 
+//#include "ioctl.h"
+#include <sys/ioccom.h>
+
 
 #include <stdint.h>
 #define __u8 uint8_t
