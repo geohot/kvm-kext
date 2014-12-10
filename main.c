@@ -14,6 +14,7 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
 }
 
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
+  printf("get ioctl %lX with pData %p\n", iCmd, pData);
   /* all the real work happens here */
   switch (iCmd) {
     case KVM_GET_API_VERSION:

@@ -2,7 +2,31 @@
 #include <stdlib.h>
 #include <linux/kvm.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
 #include <fcntl.h>
+#include <stdarg.h>
+#include <errno.h>
+
+int kvm_ioctl(int fd, int type, ...)
+{
+  int ret;
+  void *arg;
+  va_list ap;
+
+  va_start(ap, type);
+  arg = va_arg(ap, void *);
+  va_end(ap);
+
+  ret = ioctl(fd, type, arg);
+#ifdef __linux__
+  if (ret == -1) {
+    ret = -errno;
+  }
+  return ret;
+#else
+  return errno;
+#endif
+}
 
 int main(int argc, char *argv[]) {
   int kvm_fd = open("/dev/kvm", O_RDWR);
@@ -10,10 +34,10 @@ int main(int argc, char *argv[]) {
     perror("kvm_open");
     return -1;
   }
-  int version = ioctl(kvm_fd, KVM_GET_API_VERSION, 0);
-  if (version == KVM_API_VERSION) {
-    printf("got version %d\n", version);
-  } else {
+  printf("sending ioctl %X\n", KVM_GET_API_VERSION);
+  int version = kvm_ioctl(kvm_fd, KVM_GET_API_VERSION, 0);
+  printf("got version %d\n", version);
+  if (version != KVM_API_VERSION) {
     perror("ioctl");
   }
   return 0;
