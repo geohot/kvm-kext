@@ -1,7 +1,12 @@
+#include <sys/proc.h>
 #include <libkern/libkern.h>
 #include <mach/mach_types.h>
 #include <sys/conf.h>
 #include <miscfs/devfs/devfs.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #include "kvm.h"
 
@@ -15,13 +20,40 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
 
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   printf("get ioctl %lX with pData %p\n", iCmd, pData);
-  /* all the real work happens here */
+  /* kvm_ioctl */
   switch (iCmd) {
     case KVM_GET_API_VERSION:
       return KVM_API_VERSION;
+    case KVM_GET_MSR_INDEX_LIST:
+      return EOPNOTSUPP;
+    case KVM_CREATE_VM:
+      // assign an fd, must be a system fd
+      // can't do this
+      return 0;
+    case KVM_GET_VCPU_MMAP_SIZE:
+      return PAGE_SIZE;
+    case KVM_CHECK_EXTENSION:
+      // no extensions are available
+      return 0;
     default:
-      return -1;
+      break;
   }
+
+  /* kvm_vm_ioctl */
+  switch (iCmd) {
+    case KVM_CREATE_VCPU:
+      return 0;
+    default:
+      break;
+  }
+
+  /* kvm_vcpu_ioctl */
+  switch (iCmd) {
+    default:
+      break;
+  }
+
+  return EOPNOTSUPP;
 }
 
 static struct cdevsw kvm_functions = {

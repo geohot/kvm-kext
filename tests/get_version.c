@@ -24,6 +24,8 @@ int kvm_ioctl(int fd, int type, ...)
   }
   return ret;
 #else
+  // os x seems to have issues allocating an fd in the kernel
+  if (type == KVM_CREATE_VCPU || type == KVM_CREATE_VM) return fd;
   return errno;
 #endif
 }
@@ -40,6 +42,8 @@ int main(int argc, char *argv[]) {
   if (version != KVM_API_VERSION) {
     perror("ioctl");
   }
+  int vm_fd = kvm_ioctl(kvm_fd, KVM_CREATE_VM, 0);
+  printf("got vm %d\n", vm_fd);
   return 0;
 }
 
