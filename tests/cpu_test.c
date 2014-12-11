@@ -4,11 +4,45 @@
 #include <sys/mman.h>
 #include <string.h>
 
+// 4MB
+#define RAM_SIZE 0x400000
+#define ENTRY_POINT 0x100000
+
 void loop() {
   while (1) {
     printf("real talk\n");
     sleep(1);
   }
+}
+
+void enter_32(int vcpu_fd) {
+  struct kvm_regs regs = {
+    .rsp = 0x80000,  /* 512KB */
+    .rip = ENTRY_POINT, /* 1MB */
+    .rflags = 2,
+  };
+  struct kvm_sregs sregs = {
+    .cs = { 0, -1u,  8, 11, 1, 0, 1, 1, 0, 1, 0, 0 },
+    .ds = { 0, -1u, 16,  3, 1, 0, 1, 1, 0, 1, 0, 0 },
+    .es = { 0, -1u, 16,  3, 1, 0, 1, 1, 0, 1, 0, 0 },
+    .fs = { 0, -1u, 16,  3, 1, 0, 1, 1, 0, 1, 0, 0 },
+    .gs = { 0, -1u, 16,  3, 1, 0, 1, 1, 0, 1, 0, 0 },
+    .ss = { 0, -1u, 16,  3, 1, 0, 1, 1, 0, 1, 0, 0 },
+
+    .tr = { 0, 10000, 24, 11, 1, 0, 0, 0, 0, 0, 0, 0 },
+    .ldt = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
+    .gdt = { 0, 0 },
+    .idt = { 0, 0 },
+    .cr0 = 0x37,
+    .cr3 = 0,
+    .cr4 = 0,
+    .efer = 0,
+    .apic_base = 0,
+    .interrupt_bitmap = { 0 },
+  };
+
+  kvm_ioctl(vcpu_fd, KVM_SET_REGS, &regs);
+  kvm_ioctl(vcpu_fd, KVM_SET_SREGS, &sregs);
 }
 
 void kvm_show_regs(int vcpu_fd, int vcpu) {
@@ -27,8 +61,6 @@ void kvm_show_regs(int vcpu_fd, int vcpu) {
     regs.r12, regs.r13, regs.r14, regs.r15,
     regs.rip, regs.rflags);
 }
-
-#define RAM_SIZE 0xa0000
 
 int main(int argc, char *argv[]) {
   int err;
@@ -50,11 +82,12 @@ int main(int argc, char *argv[]) {
 
   // nops
   memset(guest_ram, 0x90, RAM_SIZE);
-  guest_ram[0xFFF1] = 0xeb;
-  guest_ram[0xFFF2] = 0xfe;
+
+  guest_ram[ENTRY_POINT + 0x10] = 0x40;  // inc eax
 
   int vcpu_fd = kvm_ioctl(vm_fd, KVM_CREATE_VCPU, 0);
   printf("three fds %d %d %d\n", kvm_fd, vm_fd, vcpu_fd);
+  enter_32(vcpu_fd);
 
   kvm_show_regs(vcpu_fd, 0);
 
