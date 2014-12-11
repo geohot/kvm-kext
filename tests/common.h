@@ -21,6 +21,7 @@ int kvm_ioctl(int fd, int type, ...)
 #ifdef __linux__
   if (ret == -1) {
     ret = -errno;
+    perror("ioctl");
   }
   return ret;
 #else
