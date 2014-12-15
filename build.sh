@@ -7,8 +7,7 @@ set -e
 
 # rebuild the kext
 mkdir -p kvm.kext/Contents/MacOS
-#gcc -static main.c vmx.c -o kvm.kext/Contents/MacOS/kvm -fno-builtin -nostdlib -lkmod -r -I/System/Library/Frameworks/Kernel.framework/Headers -I include/ -Wall -Xlinker -kext
-g++ -static testvmx.cpp -o kvm.kext/Contents/MacOS/kvm -fno-builtin -nostdlib -lkmodc++ -lkmod -lcc_kext -r -I/System/Library/Frameworks/Kernel.framework/Headers -I include/ -Wall -Xlinker -kext -mkernel
+gcc -static main.c -o kvm.kext/Contents/MacOS/kvm -fno-builtin -nostdlib -lkmod -r -I/System/Library/Frameworks/Kernel.framework/Headers -I include/ -Wall -Xlinker -kext
 
 # copy
 sudo rm -rf /tmp/kvm.kext
