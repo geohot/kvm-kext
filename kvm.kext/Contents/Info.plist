@@ -40,22 +40,6 @@
 	<dict/>
 	<key>OSBundleAllowUserLoad</key>
 	<true/>
-  <key>IOKitPersonalities</key>
-  <dict>
-    <key>kvm</key>
-    <dict>
-      <key>CFBundleIdentifier</key>
-      <string>com.geohot.virt.kvm</string>
-      <key>IOClass</key>
-      <string>kvm</string>
-      <key>IOMatchCategory</key>
-      <string>kvm</string>
-      <key>IOProviderClass</key>
-      <string>IOResources</string>
-      <key>IOResoruceMatch</key>
-      <string>IOKit</string>
-    </dict>
-  </dict>
 	<key>OSBundleLibraries</key>
 	<dict>
 		<key>com.apple.kpi.bsd</key>

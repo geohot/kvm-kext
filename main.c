@@ -36,7 +36,6 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
     case KVM_CREATE_VM:
       // assign an fd, must be a system fd
       // can't do this
-      hardware_enable();
       return 0;
     case KVM_GET_VCPU_MMAP_SIZE:
       return PAGE_SIZE;
@@ -108,9 +107,8 @@ kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
   // insecure for testing!
   g_kvm_ctl = devfs_make_node(makedev(g_kvm_major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "kvm");
 
-  //ret = host_vmxon(FALSE);
+  ret = host_vmxon(FALSE);
   IOLog("host_vmxon: %d\n", ret);
-  //hardware_enable();
 
   return KMOD_RETURN_SUCCESS;
 }
