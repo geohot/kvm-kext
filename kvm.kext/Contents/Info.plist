@@ -40,6 +40,22 @@
 	<dict/>
 	<key>OSBundleAllowUserLoad</key>
 	<true/>
+  <key>IOKitPersonalities</key>
+  <dict>
+    <key>kvm</key>
+    <dict>
+      <key>CFBundleIdentifier</key>
+      <string>com.geohot.virt.kvm</string>
+      <key>IOClass</key>
+      <string>kvm</string>
+      <key>IOMatchCategory</key>
+      <string>kvm</string>
+      <key>IOProviderClass</key>
+      <string>IOResources</string>
+      <key>IOResoruceMatch</key>
+      <string>IOKit</string>
+    </dict>
+  </dict>
 	<key>OSBundleLibraries</key>
 	<dict>
 		<key>com.apple.kpi.bsd</key>
@@ -47,6 +63,8 @@
 		<key>com.apple.kpi.libkern</key>
 		<string>9.0.0</string>
 		<key>com.apple.kpi.mach</key>
+		<string>8.0.0</string>
+		<key>com.apple.kpi.iokit</key>
 		<string>8.0.0</string>
     <key>com.apple.kpi.unsupported</key>
     <string>9.0.0</string>

@@ -14,7 +14,7 @@ struct vmcs {
   char data[0];
 };
 
-unsigned char vmcs[4096] __attribute__ ((aligned (4096)));
+unsigned char vmcs[0x1000] __attribute__ ((aligned (0x1000)));
 struct vmcs *this_vmcs = (struct vmcs *)vmcs;
 
 #include <asm/vmx.h>
@@ -62,19 +62,22 @@ static inline unsigned long long native_read_msr(unsigned int msr) {
 void hardware_enable() {
   u32 vmx_msr_low, vmx_msr_high;
   rdmsr(MSR_IA32_VMX_BASIC, vmx_msr_low, vmx_msr_high);
+  printf("msr %x %x\n", vmx_msr_low, vmx_msr_high);
 
   this_vmcs->revision_id = vmx_msr_low;
   u64 phys = pmap_find_phys(kernel_pmap, vmcs);
   printf("vmcs @ %p @ %p\n", vmcs, phys);
 
-  write_cr4(read_cr4() | X86_CR4_VMXE);
+  printf("enabled %x\n", cpu_vmx_enabled());
+
+  //write_cr4(read_cr4() | X86_CR4_VMXE);
   // should be per cpu?
-  kvm_cpu_vmxon(phys << 12);
+  //kvm_cpu_vmxon(phys << 12);
 }
 
 void hardware_disable() {
   if (cpu_vmx_enabled()) {
-    kvm_cpu_vmxoff();
+    //kvm_cpu_vmxoff();
     write_cr4(read_cr4() & ~X86_CR4_VMXE);
   }
 }

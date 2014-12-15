@@ -8,6 +8,8 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#include <i386/vmx.h>
+
 #include <linux/kvm.h>
 //#include <linux/kvm_host.h>
 
@@ -95,6 +97,7 @@ static int g_kvm_major;
 static void *g_kvm_ctl;
  
 kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
+  int ret;
   printf("MyKext has started.\n");
 
   g_kvm_major = cdevsw_add(-1, &kvm_functions);
@@ -105,7 +108,9 @@ kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
   // insecure for testing!
   g_kvm_ctl = devfs_make_node(makedev(g_kvm_major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "kvm");
 
-  hardware_enable();
+  //ret = host_vmxon(FALSE);
+  IOLog("host_vmxon: %d\n", ret);
+  //hardware_enable();
 
   return KMOD_RETURN_SUCCESS;
 }
@@ -113,10 +118,12 @@ kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
 kern_return_t MyKextStop(kmod_info_t *ki, void *d) {
   printf("MyKext has stopped.\n");
 
-  hardware_disable();
+  //hardware_disable();
 
   devfs_remove(g_kvm_ctl);
   cdevsw_remove(g_kvm_major, &kvm_functions);
+
+  //host_vmxoff();
 
   return KERN_SUCCESS;
 }

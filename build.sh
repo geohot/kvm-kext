@@ -7,7 +7,8 @@ set -e
 
 # rebuild the kext
 mkdir -p kvm.kext/Contents/MacOS
-gcc -static main.c vmx.c -o kvm.kext/Contents/MacOS/kvm -fno-builtin -nostdlib -lkmod -r -I/System/Library/Frameworks/Kernel.framework/Headers -I include/ -Wall -Xlinker -kext
+#gcc -static main.c vmx.c -o kvm.kext/Contents/MacOS/kvm -fno-builtin -nostdlib -lkmod -r -I/System/Library/Frameworks/Kernel.framework/Headers -I include/ -Wall -Xlinker -kext
+g++ -static testvmx.cpp -o kvm.kext/Contents/MacOS/kvm -fno-builtin -nostdlib -lkmodc++ -lkmod -lcc_kext -r -I/System/Library/Frameworks/Kernel.framework/Headers -I include/ -Wall -Xlinker -kext -mkernel
 
 # copy
 sudo rm -rf /tmp/kvm.kext
@@ -19,6 +20,9 @@ codesign -v -s "George Hotz" /tmp/kvm.kext
 # set permissions
 sudo chown -R root:wheel /tmp/kvm.kext
 sudo chmod -R 0644 /tmp/kvm.kext
+
+# check the kext
+sudo kextutil /tmp/kvm.kext/
 
 # load the kext
 sudo kextload -v /tmp/kvm.kext
