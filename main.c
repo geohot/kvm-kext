@@ -8,7 +8,8 @@
 #include <fcntl.h>
 #include <errno.h>
 
-#include "kvm.h"
+#include <linux/kvm.h>
+//#include <linux/kvm_host.h>
 
 static int kvm_dev_open(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
   return 0;
@@ -19,6 +20,10 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
 }
 
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
+  // maybe these shouldn't be on the stack?
+  /*struct kvm_regs kvm_regs;
+  struct kvm_sregs kvm_sregs;*/
+
   printf("get ioctl %lX with pData %p\n", iCmd, pData);
   /* kvm_ioctl */
   switch (iCmd) {
@@ -29,6 +34,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
     case KVM_CREATE_VM:
       // assign an fd, must be a system fd
       // can't do this
+      hardware_enable();
       return 0;
     case KVM_GET_VCPU_MMAP_SIZE:
       return PAGE_SIZE;
@@ -43,12 +49,24 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
   switch (iCmd) {
     case KVM_CREATE_VCPU:
       return 0;
+    case KVM_SET_USER_MEMORY_REGION:
+      return 0;
     default:
       break;
   }
 
   /* kvm_vcpu_ioctl */
   switch (iCmd) {
+    case KVM_GET_REGS:
+      //kvm_arch_vcpu_ioctl_get_regs(vcpu, &kvm_regs);
+      return 0;
+    case KVM_SET_REGS:
+      return 0;
+    case KVM_GET_SREGS:
+      return 0;
+    case KVM_SET_SREGS:
+      return 0;
+    case KVM_RUN:
     default:
       break;
   }

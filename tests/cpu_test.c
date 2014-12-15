@@ -91,15 +91,15 @@ int main(int argc, char *argv[]) {
 
   kvm_show_regs(vcpu_fd, 0);
 
-  int size = kvm_ioctl(kvm_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
+  /*int size = kvm_ioctl(kvm_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
   printf("vcpu size: 0x%x\n", size);
-  struct kvm_run *run = (struct kvm_run *)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, vcpu_fd, 0);
+  struct kvm_run *run = (struct kvm_run *)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, vcpu_fd, 0);*/
 
   err = kvm_ioctl(vcpu_fd, KVM_RUN, 0);
   printf("running...%d\n", err);
   usleep(1000*100);
 
   kvm_show_regs(vcpu_fd, 0);
-  printf("exit code %d suberror %d\n", run->exit_reason, run->internal.suberror);
+  //printf("exit code %d suberror %d\n", run->exit_reason, run->internal.suberror);
 }
 
