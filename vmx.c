@@ -2,6 +2,9 @@
 
 #define __KERNEL__
 
+#include <linux/types.h>
+#include <asm/msr-index.h>
+
 // needed for hacks
 unsigned long __force_order;
 
@@ -37,6 +40,17 @@ static inline int cpu_vmx_enabled(void) {
 typedef struct pmap *pmap_t;
 extern pmap_t kernel_pmap;
 extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
+
+#define DECLARE_ARGS(val, low, high)    unsigned low, high
+#define EAX_EDX_VAL(val, low, high)     ((low) | ((u64)(high) << 32))
+#define EAX_EDX_ARGS(val, low, high)    "a" (low), "d" (high)
+#define EAX_EDX_RET(val, low, high)     "=a" (low), "=d" (high)
+
+static inline unsigned long long native_read_msr(unsigned int msr) {
+  DECLARE_ARGS(val, low, high);
+  asm volatile("rdmsr" : EAX_EDX_RET(val, low, high) : "c" (msr));
+  return EAX_EDX_VAL(val, low, high);
+}
 
 #define rdmsr(msr, low, high)                                   \
   do {                                                            \
