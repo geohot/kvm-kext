@@ -8,9 +8,11 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#include <IOKit/IOLib.h>
 #include <i386/vmx.h>
 
 #include <linux/kvm.h>
+#include "vmx.h"
 //#include <linux/kvm_host.h>
 
 static int kvm_dev_open(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
@@ -36,6 +38,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
     case KVM_CREATE_VM:
       // assign an fd, must be a system fd
       // can't do this
+
       return 0;
     case KVM_GET_VCPU_MMAP_SIZE:
       return PAGE_SIZE;
@@ -99,6 +102,13 @@ kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
   int ret;
   printf("MyKext has started.\n");
 
+  ret = host_vmxon(FALSE);
+  IOLog("host_vmxon: %d\n", ret);
+
+  if (ret != 0) {
+    return KMOD_RETURN_FAILURE;
+  }
+
   g_kvm_major = cdevsw_add(-1, &kvm_functions);
   if (g_kvm_major < 0) {
     return KMOD_RETURN_FAILURE;
@@ -106,9 +116,6 @@ kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
 
   // insecure for testing!
   g_kvm_ctl = devfs_make_node(makedev(g_kvm_major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "kvm");
-
-  ret = host_vmxon(FALSE);
-  IOLog("host_vmxon: %d\n", ret);
 
   return KMOD_RETURN_SUCCESS;
 }
@@ -121,7 +128,7 @@ kern_return_t MyKextStop(kmod_info_t *ki, void *d) {
   devfs_remove(g_kvm_ctl);
   cdevsw_remove(g_kvm_major, &kvm_functions);
 
-  //host_vmxoff();
+  host_vmxoff();
 
   return KERN_SUCCESS;
 }
