@@ -153,8 +153,8 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
   switch (iCmd) {
     case KVM_CREATE_VCPU:
       vcpu->vmcs = allocate_vmcs();
-      //vmcs_clear(vcpu->vmcs);
-      //vmcs_load(vcpu->vmcs);
+      vmcs_clear(vcpu->vmcs);
+      vmcs_load(vcpu->vmcs);
       return 0;
     case KVM_SET_USER_MEMORY_REGION:
       return 0;
