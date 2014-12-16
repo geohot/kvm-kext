@@ -24,7 +24,7 @@
 //#include <linux/kvm_host.h>
 
 struct vcpu_arch {
-  u64 regs[NR_VCPU_REGS];
+  unsigned long regs[NR_VCPU_REGS];
 };
 
 struct vcpu {
@@ -42,19 +42,45 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
   return 0;
 }
 
-void kvm_get_regs(user_addr_t kvm_regs_user) {
+void kvm_get_regs(struct vcpu *vcpu, user_addr_t kvm_regs_user) {
   struct kvm_regs kvm_regs;
-  //kvm_arch_vcpu_ioctl_get_regs(vcpu, &kvm_regs);
+  kvm_regs.rax = vcpu->arch.regs[VCPU_REGS_RAX]; kvm_regs.rcx = vcpu->arch.regs[VCPU_REGS_RCX];
+  kvm_regs.rdx = vcpu->arch.regs[VCPU_REGS_RDX]; kvm_regs.rbx = vcpu->arch.regs[VCPU_REGS_RBX];
+  kvm_regs.rsp = vcpu->arch.regs[VCPU_REGS_RSP]; kvm_regs.rbp = vcpu->arch.regs[VCPU_REGS_RBP];
+  kvm_regs.rsi = vcpu->arch.regs[VCPU_REGS_RSI]; kvm_regs.rdi = vcpu->arch.regs[VCPU_REGS_RDI];
+
+  kvm_regs.r8 = vcpu->arch.regs[VCPU_REGS_R8]; kvm_regs.r9 = vcpu->arch.regs[VCPU_REGS_R9];
+  kvm_regs.r10 = vcpu->arch.regs[VCPU_REGS_R10]; kvm_regs.r11 = vcpu->arch.regs[VCPU_REGS_R11];
+  kvm_regs.r12 = vcpu->arch.regs[VCPU_REGS_R12]; kvm_regs.r13 = vcpu->arch.regs[VCPU_REGS_R13];
+  kvm_regs.r14 = vcpu->arch.regs[VCPU_REGS_R14]; kvm_regs.r15 = vcpu->arch.regs[VCPU_REGS_R15];
+
+  kvm_regs.rip = vcpu->arch.regs[VCPU_REGS_RIP];
+
+  // rflags?
+
   copyout(&kvm_regs, kvm_regs_user, sizeof(kvm_regs));
 }
 
-void kvm_set_regs(user_addr_t kvm_regs_user) {
+void kvm_set_regs(struct vcpu *vcpu, user_addr_t kvm_regs_user) {
   struct kvm_regs kvm_regs;
   copyin(kvm_regs_user, &kvm_regs, sizeof(kvm_regs));
 
+  vcpu->arch.regs[VCPU_REGS_RAX] = kvm_regs.rax; vcpu->arch.regs[VCPU_REGS_RCX] = kvm_regs.rcx;
+  vcpu->arch.regs[VCPU_REGS_RDX] = kvm_regs.rdx; vcpu->arch.regs[VCPU_REGS_RBX] = kvm_regs.rbx;
+  vcpu->arch.regs[VCPU_REGS_RSP] = kvm_regs.rsp; vcpu->arch.regs[VCPU_REGS_RBP] = kvm_regs.rbp;
+  vcpu->arch.regs[VCPU_REGS_RSI] = kvm_regs.rsi; vcpu->arch.regs[VCPU_REGS_RDI] = kvm_regs.rdi;
+
+  vcpu->arch.regs[VCPU_REGS_R8] = kvm_regs.r8; vcpu->arch.regs[VCPU_REGS_R9] = kvm_regs.r9;
+  vcpu->arch.regs[VCPU_REGS_R10] = kvm_regs.r10; vcpu->arch.regs[VCPU_REGS_R11] = kvm_regs.r11;
+  vcpu->arch.regs[VCPU_REGS_R12] = kvm_regs.r12; vcpu->arch.regs[VCPU_REGS_R13] = kvm_regs.r13;
+  vcpu->arch.regs[VCPU_REGS_R14] = kvm_regs.r14; vcpu->arch.regs[VCPU_REGS_R15] = kvm_regs.r15;
+
+  vcpu->arch.regs[VCPU_REGS_RIP] = kvm_regs.rip;
+
+  // rflags?
 }
 
-void kvm_get_sregs(user_addr_t kvm_sregs_user) {
+/*void kvm_get_sregs(user_addr_t kvm_sregs_user) {
   struct kvm_sregs kvm_sregs;
   copyout(&kvm_sregs, kvm_sregs_user, sizeof(kvm_sregs));
 }
@@ -62,7 +88,7 @@ void kvm_get_sregs(user_addr_t kvm_sregs_user) {
 void kvm_set_sregs(user_addr_t kvm_sregs_user) {
   struct kvm_sregs kvm_sregs;
   copyin(kvm_sregs_user, &kvm_sregs, sizeof(kvm_sregs));
-}
+}*/
 
 void kvm_run() {
 
@@ -137,16 +163,16 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
   /* kvm_vcpu_ioctl */
   switch (iCmd) {
     case KVM_GET_REGS:
-      kvm_get_regs((user_addr_t)pData);
+      kvm_get_regs(vcpu, (user_addr_t)pData);
       return 0;
     case KVM_SET_REGS:
-      kvm_set_regs((user_addr_t)pData);
+      kvm_set_regs(vcpu, (user_addr_t)pData);
       return 0;
     case KVM_GET_SREGS:
-      kvm_get_sregs((user_addr_t)pData);
+      //kvm_get_sregs((user_addr_t)pData);
       return 0;
     case KVM_SET_SREGS:
-      kvm_set_sregs((user_addr_t)pData);
+      //kvm_set_sregs((user_addr_t)pData);
       return 0;
     case KVM_RUN:
       kvm_run();
