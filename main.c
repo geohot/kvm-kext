@@ -149,7 +149,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
   /* kvm_vm_ioctl */
   switch (iCmd) {
     case KVM_CREATE_VCPU:
-      //vcpu->vmcs = allocate_vmcs();
+      vcpu->vmcs = allocate_vmcs();
       /*vmcs_clear(vcpu->vmcs);
       vmcs_load(vcpu->vmcs);*/
       return 0;
