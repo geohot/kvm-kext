@@ -162,16 +162,16 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       break;
   }
 
-  //if (vcpu->vmcs == NULL) return -1;
+  if (vcpu->vmcs == NULL) return EINVAL;
 
   /* kvm_vcpu_ioctl */
   switch (iCmd) {
     case KVM_GET_REGS:
-      if (pData == NULL) return -1;
+      if (pData == NULL) return EINVAL;
       kvm_get_regs(vcpu, (struct kvm_regs *)pData);
       return 0;
     case KVM_SET_REGS:
-      if (pData == NULL) return -1;
+      if (pData == NULL) return EINVAL;
       kvm_set_regs(vcpu, (struct kvm_regs *)pData);
       return 0;
     case KVM_GET_SREGS:
