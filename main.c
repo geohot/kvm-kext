@@ -124,6 +124,7 @@ static void vmcs_clear(struct vmcs *vmcs) {
 
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   // maybe these shouldn't be on the stack?
+  iCmd &= 0xFFFFFFFF;
   printf("get ioctl %lX with pData %p\n", iCmd, pData);
   /* kvm_ioctl */
   switch (iCmd) {
@@ -148,9 +149,9 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
   /* kvm_vm_ioctl */
   switch (iCmd) {
     case KVM_CREATE_VCPU:
-      vcpu->vmcs = allocate_vmcs();
-      vmcs_clear(vcpu->vmcs);
-      vmcs_load(vcpu->vmcs);
+      //vcpu->vmcs = allocate_vmcs();
+      /*vmcs_clear(vcpu->vmcs);
+      vmcs_load(vcpu->vmcs);*/
       return 0;
     case KVM_SET_USER_MEMORY_REGION:
       return 0;
@@ -158,15 +159,15 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       break;
   }
 
-  if (vcpu->vmcs == NULL) return -1;
+  //if (vcpu->vmcs == NULL) return -1;
 
   /* kvm_vcpu_ioctl */
   switch (iCmd) {
     case KVM_GET_REGS:
-      kvm_get_regs(vcpu, (user_addr_t)pData);
+      //kvm_get_regs(vcpu, (user_addr_t)pData);
       return 0;
     case KVM_SET_REGS:
-      kvm_set_regs(vcpu, (user_addr_t)pData);
+      //kvm_set_regs(vcpu, (user_addr_t)pData);
       return 0;
     case KVM_GET_SREGS:
       //kvm_get_sregs((user_addr_t)pData);
@@ -175,7 +176,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       //kvm_set_sregs((user_addr_t)pData);
       return 0;
     case KVM_RUN:
-      kvm_run();
+      //kvm_run();
       return 0;
     default:
       break;
