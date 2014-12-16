@@ -12,8 +12,27 @@
 #include <i386/vmx.h>
 
 #include <linux/kvm.h>
-#include "vmx.h"
+#include "kvm_host.h"
+//#include "kvm_cache_regs.h"
+
+#include "vmx_shims.h"
+#include "vmcs.h"
+
+//struct vcpu_vmx only_cpu;
+
+//#include "vmx.h"
 //#include <linux/kvm_host.h>
+
+struct vcpu_arch {
+  u64 regs[NR_VCPU_REGS];
+};
+
+struct vcpu {
+  vmcs *vmcs;
+  struct vcpu_arch arch;
+} __vcpu;
+
+struct vcpu *vcpu = &__vcpu;
 
 static int kvm_dev_open(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
   return 0;
@@ -23,11 +42,62 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
   return 0;
 }
 
+void kvm_get_regs(user_addr_t kvm_regs_user) {
+  struct kvm_regs kvm_regs;
+  //kvm_arch_vcpu_ioctl_get_regs(vcpu, &kvm_regs);
+  copyout(&kvm_regs, kvm_regs_user, sizeof(kvm_regs));
+}
+
+void kvm_set_regs(user_addr_t kvm_regs_user) {
+  struct kvm_regs kvm_regs;
+  copyin(kvm_regs_user, &kvm_regs, sizeof(kvm_regs));
+
+}
+
+void kvm_get_sregs(user_addr_t kvm_sregs_user) {
+  struct kvm_sregs kvm_sregs;
+  copyout(&kvm_sregs, kvm_sregs_user, sizeof(kvm_sregs));
+}
+
+void kvm_set_sregs(user_addr_t kvm_sregs_user) {
+  struct kvm_sregs kvm_sregs;
+  copyin(kvm_sregs_user, &kvm_sregs, sizeof(kvm_sregs));
+}
+
+void kvm_run() {
+
+}
+
+#define __ex(x) x
+#define __pa vmx_paddr
+
+static void vmcs_load(struct vmcs *vmcs) {
+	u64 phys_addr = __pa(vmcs);
+	u8 error;
+
+	asm volatile (__ex(ASM_VMX_VMPTRLD_RAX) "; setna %0"
+			: "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
+			: "cc", "memory");
+	if (error)
+		printf("kvm: vmptrld %p/%llx failed\n",
+		       vmcs, phys_addr);
+}
+
+
+static void vmcs_clear(struct vmcs *vmcs) {
+	u64 phys_addr = __pa(vmcs);
+	u8 error;
+
+	asm volatile (__ex(ASM_VMX_VMCLEAR_RAX) "; setna %0"
+		      : "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
+		      : "cc", "memory");
+	if (error)
+		printf("kvm: vmclear fail: %p/%llx\n",
+		       vmcs, phys_addr);
+}
+
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   // maybe these shouldn't be on the stack?
-  /*struct kvm_regs kvm_regs;
-  struct kvm_sregs kvm_sregs;*/
-
   printf("get ioctl %lX with pData %p\n", iCmd, pData);
   /* kvm_ioctl */
   switch (iCmd) {
@@ -52,6 +122,9 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
   /* kvm_vm_ioctl */
   switch (iCmd) {
     case KVM_CREATE_VCPU:
+      vcpu->vmcs = allocate_vmcs();
+      vmcs_clear(vcpu->vmcs);
+      vmcs_load(vcpu->vmcs);
       return 0;
     case KVM_SET_USER_MEMORY_REGION:
       return 0;
@@ -59,18 +132,25 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       break;
   }
 
+  if (vcpu->vmcs == NULL) return -1;
+
   /* kvm_vcpu_ioctl */
   switch (iCmd) {
     case KVM_GET_REGS:
-      //kvm_arch_vcpu_ioctl_get_regs(vcpu, &kvm_regs);
+      kvm_get_regs((user_addr_t)pData);
       return 0;
     case KVM_SET_REGS:
+      kvm_set_regs((user_addr_t)pData);
       return 0;
     case KVM_GET_SREGS:
+      kvm_get_sregs((user_addr_t)pData);
       return 0;
     case KVM_SET_SREGS:
+      kvm_set_sregs((user_addr_t)pData);
       return 0;
     case KVM_RUN:
+      kvm_run();
+      return 0;
     default:
       break;
   }
@@ -125,10 +205,13 @@ kern_return_t MyKextStop(kmod_info_t *ki, void *d) {
 
   //hardware_disable();
 
+
   devfs_remove(g_kvm_ctl);
   cdevsw_remove(g_kvm_major, &kvm_functions);
 
   host_vmxoff();
+
+  //if (only_vmcs != NULL) vmx_pfree(only_vmcs);
 
   return KERN_SUCCESS;
 }

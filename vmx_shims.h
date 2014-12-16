@@ -62,3 +62,15 @@ void vmx_pfree(void *va) {
 	IOFreeAligned(va, PAGE_SIZE);
 }
 
+vmcs *allocate_vmcs() {
+  u64 vmx_msr = rdmsr64(MSR_IA32_VMX_BASIC);
+  printf("msr %llx\n", vmx_msr);
+
+  vmcs *ret;
+  ret = vmx_pcalloc();
+  ret->revision_id = vmx_msr & 0xFFFFFFFF;
+
+  return ret;
+}
+
+

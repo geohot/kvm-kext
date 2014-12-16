@@ -208,6 +208,8 @@ union kvm_mmu_page_role {
 	};
 };
 
+#if 0
+
 struct kvm_mmu_page {
 	struct list_head link;
 	struct hlist_node hash_link;
@@ -1078,3 +1080,6 @@ void kvm_handle_pmu_event(struct kvm_vcpu *vcpu);
 void kvm_deliver_pmi(struct kvm_vcpu *vcpu);
 
 #endif /* _ASM_X86_KVM_HOST_H */
+
+#endif
+
