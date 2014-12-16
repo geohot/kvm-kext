@@ -46,6 +46,57 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
   return 0;
 }
 
+static u32 vmx_segment_access_rights(struct kvm_segment *var) {
+	u32 ar;
+
+	if (var->unusable || !var->present)
+		ar = 1 << 16;
+	else {
+		ar = var->type & 15;
+		ar |= (var->s & 1) << 4;
+		ar |= (var->dpl & 3) << 5;
+		ar |= (var->present & 1) << 7;
+		ar |= (var->avl & 1) << 12;
+		ar |= (var->l & 1) << 13;
+		ar |= (var->db & 1) << 14;
+		ar |= (var->g & 1) << 15;
+	}
+
+	return ar;
+}
+
+#define VMX_SEGMENT_FIELD(seg)					\
+	[VCPU_SREG_##seg] = {                                   \
+		.selector = GUEST_##seg##_SELECTOR,		\
+		.base = GUEST_##seg##_BASE,		   	\
+		.limit = GUEST_##seg##_LIMIT,		   	\
+		.ar_bytes = GUEST_##seg##_AR_BYTES,	   	\
+	}
+
+static const struct kvm_vmx_segment_field {
+	unsigned selector;
+	unsigned base;
+	unsigned limit;
+	unsigned ar_bytes;
+} kvm_vmx_segment_fields[] = {
+	VMX_SEGMENT_FIELD(CS),
+	VMX_SEGMENT_FIELD(DS),
+	VMX_SEGMENT_FIELD(ES),
+	VMX_SEGMENT_FIELD(FS),
+	VMX_SEGMENT_FIELD(GS),
+	VMX_SEGMENT_FIELD(SS),
+	VMX_SEGMENT_FIELD(TR),
+	VMX_SEGMENT_FIELD(LDTR),
+};
+
+static void kvm_set_segment(struct vcpu *vcpu, struct kvm_segment *var, int seg) {
+	const struct kvm_vmx_segment_field *sf = &kvm_vmx_segment_fields[seg];
+	vmcs_writel(sf->base, var->base);
+	vmcs_write32(sf->limit, var->limit);
+	vmcs_write16(sf->selector, var->selector);
+	vmcs_write32(sf->ar_bytes, vmx_segment_access_rights(var));
+}
+
 void kvm_get_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
   kvm_regs->rax = vcpu->arch.regs[VCPU_REGS_RAX]; kvm_regs->rcx = vcpu->arch.regs[VCPU_REGS_RCX];
   kvm_regs->rdx = vcpu->arch.regs[VCPU_REGS_RDX]; kvm_regs->rbx = vcpu->arch.regs[VCPU_REGS_RBX];
@@ -80,12 +131,86 @@ void kvm_set_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
 /*void kvm_get_sregs(user_addr_t kvm_sregs_user) {
   struct kvm_sregs kvm_sregs;
   copyout(&kvm_sregs, kvm_sregs_user, sizeof(kvm_sregs));
-}
-
-void kvm_set_sregs(user_addr_t kvm_sregs_user) {
-  struct kvm_sregs kvm_sregs;
-  copyin(kvm_sregs_user, &kvm_sregs, sizeof(kvm_sregs));
 }*/
+
+int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
+	/*struct msr_data apic_base_msr;
+	int mmu_reset_needed = 0;
+	int pending_vec, max_bits, idx;
+	struct desc_ptr dt;
+
+	if (!guest_cpuid_has_xsave(vcpu) && (sregs->cr4 & X86_CR4_OSXSAVE))
+		return -EINVAL;
+
+	dt.size = sregs->idt.limit;
+	dt.address = sregs->idt.base;
+	kvm_x86_ops->set_idt(vcpu, &dt);
+	dt.size = sregs->gdt.limit;
+	dt.address = sregs->gdt.base;
+	kvm_x86_ops->set_gdt(vcpu, &dt);
+
+	vcpu->arch.cr2 = sregs->cr2;
+	mmu_reset_needed |= kvm_read_cr3(vcpu) != sregs->cr3;
+	vcpu->arch.cr3 = sregs->cr3;
+	__set_bit(VCPU_EXREG_CR3, (ulong *)&vcpu->arch.regs_avail);
+
+	kvm_set_cr8(vcpu, sregs->cr8);
+
+	mmu_reset_needed |= vcpu->arch.efer != sregs->efer;
+	kvm_x86_ops->set_efer(vcpu, sregs->efer);
+	apic_base_msr.data = sregs->apic_base;
+	apic_base_msr.host_initiated = true;
+	kvm_set_apic_base(vcpu, &apic_base_msr);
+
+	mmu_reset_needed |= kvm_read_cr0(vcpu) != sregs->cr0;
+	kvm_x86_ops->set_cr0(vcpu, sregs->cr0);
+	vcpu->arch.cr0 = sregs->cr0;
+
+	mmu_reset_needed |= kvm_read_cr4(vcpu) != sregs->cr4;
+	kvm_x86_ops->set_cr4(vcpu, sregs->cr4);
+	if (sregs->cr4 & X86_CR4_OSXSAVE)
+		kvm_update_cpuid(vcpu);
+
+	idx = srcu_read_lock(&vcpu->kvm->srcu);
+	if (!is_long_mode(vcpu) && is_pae(vcpu)) {
+		load_pdptrs(vcpu, vcpu->arch.walk_mmu, kvm_read_cr3(vcpu));
+		mmu_reset_needed = 1;
+	}
+	srcu_read_unlock(&vcpu->kvm->srcu, idx);
+
+	if (mmu_reset_needed)
+		kvm_mmu_reset_context(vcpu);
+
+	max_bits = KVM_NR_INTERRUPTS;
+	pending_vec = find_first_bit(
+		(const unsigned long *)sregs->interrupt_bitmap, max_bits);
+	if (pending_vec < max_bits) {
+		kvm_queue_interrupt(vcpu, pending_vec, false);
+		pr_debug("Set back pending irq %d\n", pending_vec);
+	}*/
+
+	kvm_set_segment(vcpu, &sregs->cs, VCPU_SREG_CS);
+	kvm_set_segment(vcpu, &sregs->ds, VCPU_SREG_DS);
+	kvm_set_segment(vcpu, &sregs->es, VCPU_SREG_ES);
+	kvm_set_segment(vcpu, &sregs->fs, VCPU_SREG_FS);
+	kvm_set_segment(vcpu, &sregs->gs, VCPU_SREG_GS);
+	kvm_set_segment(vcpu, &sregs->ss, VCPU_SREG_SS);
+
+	kvm_set_segment(vcpu, &sregs->tr, VCPU_SREG_TR);
+	kvm_set_segment(vcpu, &sregs->ldt, VCPU_SREG_LDTR);
+
+	//update_cr8_intercept(vcpu);
+
+	/* Older userspace won't unhalt the vcpu on reset. */
+	/*if (kvm_vcpu_is_bsp(vcpu) && kvm_rip_read(vcpu) == 0xfff0 &&
+	    sregs->cs.selector == 0xf000 && sregs->cs.base == 0xffff0000 &&
+	    !is_protmode(vcpu))
+		vcpu->arch.mp_state = KVM_MP_STATE_RUNNABLE;
+
+	kvm_make_request(KVM_REQ_EVENT, vcpu);*/
+
+	return 0;
+}
 
 void kvm_run(struct vcpu *vcpu) {
 	asm(
@@ -179,6 +304,10 @@ void kvm_run(struct vcpu *vcpu) {
 		, "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
 	      );
 
+  vcpu->__launched = 1;
+  unsigned long exit_reason = vmcs_read32(VM_EXIT_REASON);
+  unsigned long host_rsp = vmcs_readl(HOST_RSP);
+  printf("exit %llx rsp %llx\n", exit_reason, host_rsp);
 }
 
 #define __ex(x) x
@@ -262,7 +391,8 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       //kvm_get_sregs((user_addr_t)pData);
       return 0;
     case KVM_SET_SREGS:
-      //kvm_set_sregs((user_addr_t)pData);
+      if (pData == NULL) return EINVAL;
+      kvm_set_sregs(vcpu, (struct kvm_sregs *)pData);
       return 0;
     case KVM_RUN:
       kvm_run(vcpu);

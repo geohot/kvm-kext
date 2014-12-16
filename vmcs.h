@@ -7,7 +7,7 @@ static inline unsigned long vmcs_readl(unsigned long field)
 	return value;
 }
 
-/*static inline u16 vmcs_read16(unsigned long field)
+static inline u16 vmcs_read16(unsigned long field)
 {
 	return vmcs_readl(field);
 }
@@ -20,7 +20,7 @@ static inline u32 vmcs_read32(unsigned long field)
 static inline u64 vmcs_read64(unsigned long field)
 {
 	return vmcs_readl(field);
-}*/
+}
 
 static inline void vmwrite_error(unsigned long field, unsigned long value)
 {
@@ -37,7 +37,7 @@ static void vmcs_writel(unsigned long field, unsigned long value)
 		vmwrite_error(field, value);
 }
 
-/*static void vmcs_write16(unsigned long field, u16 value)
+static void vmcs_write16(unsigned long field, u16 value)
 {
 	vmcs_writel(field, value);
 }
@@ -60,5 +60,5 @@ static void vmcs_clear_bits(unsigned long field, u32 mask)
 static void vmcs_set_bits(unsigned long field, u32 mask)
 {
 	vmcs_writel(field, vmcs_readl(field) | mask);
-}*/
+}
 
