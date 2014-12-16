@@ -73,4 +73,3 @@ vmcs *allocate_vmcs() {
   return ret;
 }
 
-
