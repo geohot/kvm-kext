@@ -18,18 +18,22 @@
 #include "vmx_shims.h"
 #include "vmcs.h"
 
-//struct vcpu_vmx only_cpu;
+//struct vcpu only_cpu;
 
 //#include "vmx.h"
 //#include <linux/kvm_host.h>
 
 struct vcpu_arch {
   unsigned long regs[NR_VCPU_REGS];
+  unsigned long cr2;
 };
 
 struct vcpu {
   vmcs *vmcs;
   struct vcpu_arch arch;
+  unsigned long __launched;
+  unsigned long fail;
+  unsigned long host_rsp;
 } __vcpu;
 
 struct vcpu *vcpu = &__vcpu;
@@ -42,9 +46,7 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
   return 0;
 }
 
-//void kvm_get_regs(struct vcpu *vcpu, user_addr_t kvm_regs_user) {
 void kvm_get_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
-  //struct kvm_regs kvm_regs;
   kvm_regs->rax = vcpu->arch.regs[VCPU_REGS_RAX]; kvm_regs->rcx = vcpu->arch.regs[VCPU_REGS_RCX];
   kvm_regs->rdx = vcpu->arch.regs[VCPU_REGS_RDX]; kvm_regs->rbx = vcpu->arch.regs[VCPU_REGS_RBX];
   kvm_regs->rsp = vcpu->arch.regs[VCPU_REGS_RSP]; kvm_regs->rbp = vcpu->arch.regs[VCPU_REGS_RBP];
@@ -58,15 +60,9 @@ void kvm_get_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
   kvm_regs->rip = vcpu->arch.regs[VCPU_REGS_RIP];
 
   // rflags?
-
-  //copyout(&kvm_regs, kvm_regs_user, sizeof(kvm_regs));
 }
 
 void kvm_set_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
-  /*struct kvm_regs kvm_regs;
-  int ret = copyin(kvm_regs_user, &kvm_regs, sizeof(kvm_regs));
-  printf("copyin: %x\n", ret);*/
-
   vcpu->arch.regs[VCPU_REGS_RAX] = kvm_regs->rax; vcpu->arch.regs[VCPU_REGS_RCX] = kvm_regs->rcx;
   vcpu->arch.regs[VCPU_REGS_RDX] = kvm_regs->rdx; vcpu->arch.regs[VCPU_REGS_RBX] = kvm_regs->rbx;
   vcpu->arch.regs[VCPU_REGS_RSP] = kvm_regs->rsp; vcpu->arch.regs[VCPU_REGS_RBP] = kvm_regs->rbp;
@@ -79,8 +75,6 @@ void kvm_set_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
 
   vcpu->arch.regs[VCPU_REGS_RIP] = kvm_regs->rip;
   printf("setting rip: %llx\n", kvm_regs->rip);
-
-  // rflags?
 }
 
 /*void kvm_get_sregs(user_addr_t kvm_sregs_user) {
@@ -93,7 +87,97 @@ void kvm_set_sregs(user_addr_t kvm_sregs_user) {
   copyin(kvm_sregs_user, &kvm_sregs, sizeof(kvm_sregs));
 }*/
 
-void kvm_run() {
+void kvm_run(struct vcpu *vcpu) {
+	asm(
+		/* Store host registers */
+		"push %%rdx; push %%rbp;"
+		"push %%rcx \n\t" /* placeholder for guest rcx */
+		"push %%rcx \n\t"
+		"cmp %%rsp, %c[host_rsp](%0) \n\t"
+		"je 1f \n\t"
+		"mov %%rsp, %c[host_rsp](%0) \n\t"
+		__ex(ASM_VMX_VMWRITE_RSP_RDX) "\n\t"
+		"1: \n\t"
+		/* Reload cr2 if changed */
+		"mov %c[cr2](%0), %%rax \n\t"
+		"mov %%cr2, %%rdx \n\t"
+		"cmp %%rax, %%rdx \n\t"
+		"je 2f \n\t"
+		"mov %%rax, %%cr2 \n\t"
+		"2: \n\t"
+		/* Check if vmlaunch of vmresume is needed */
+		"cmpl $0, %c[launched](%0) \n\t"
+		/* Load guest registers.  Don't clobber flags. */
+		"mov %c[rax](%0), %%rax \n\t"
+		"mov %c[rbx](%0), %%rbx \n\t"
+		"mov %c[rdx](%0), %%rdx \n\t"
+		"mov %c[rsi](%0), %%rsi \n\t"
+		"mov %c[rdi](%0), %%rdi \n\t"
+		"mov %c[rbp](%0), %%rbp \n\t"
+		"mov %c[r8](%0),  %%r8  \n\t"
+		"mov %c[r9](%0),  %%r9  \n\t"
+		"mov %c[r10](%0), %%r10 \n\t"
+		"mov %c[r11](%0), %%r11 \n\t"
+		"mov %c[r12](%0), %%r12 \n\t"
+		"mov %c[r13](%0), %%r13 \n\t"
+		"mov %c[r14](%0), %%r14 \n\t"
+		"mov %c[r15](%0), %%r15 \n\t"
+		"mov %c[rcx](%0), %%rcx \n\t" /* kills %0 (ecx) */
+
+		/* Enter guest mode */
+		"jne 1f \n\t"
+		__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		"jmp 2f \n\t"
+		"1: " __ex(ASM_VMX_VMRESUME) "\n\t"
+		"2: "
+		/* Save guest registers, load host registers, keep flags */
+		"mov %0, %c[wordsize](%%rsp) \n\t"
+		"pop %0 \n\t"
+		"mov %%rax, %c[rax](%0) \n\t"
+		"mov %%rbx, %c[rbx](%0) \n\t"
+		"pop %c[rcx](%0) \n\t"
+		"mov %%rdx, %c[rdx](%0) \n\t"
+		"mov %%rsi, %c[rsi](%0) \n\t"
+		"mov %%rdi, %c[rdi](%0) \n\t"
+		"mov %%rbp, %c[rbp](%0) \n\t"
+		"mov %%r8,  %c[r8](%0) \n\t"
+		"mov %%r9,  %c[r9](%0) \n\t"
+		"mov %%r10, %c[r10](%0) \n\t"
+		"mov %%r11, %c[r11](%0) \n\t"
+		"mov %%r12, %c[r12](%0) \n\t"
+		"mov %%r13, %c[r13](%0) \n\t"
+		"mov %%r14, %c[r14](%0) \n\t"
+		"mov %%r15, %c[r15](%0) \n\t"
+		"mov %%cr2, %%rax   \n\t"
+		"mov %%rax, %c[cr2](%0) \n\t"
+
+		"pop  %%rbp; pop  %%rdx \n\t"
+		"setbe %c[fail](%0) \n\t"
+	      : : "c"(vcpu), "d"((unsigned long)HOST_RSP),
+		[launched]"i"(offsetof(struct vcpu, __launched)),
+		[fail]"i"(offsetof(struct vcpu, fail)),
+		[host_rsp]"i"(offsetof(struct vcpu, host_rsp)),
+		[rax]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_RAX])),
+		[rbx]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_RBX])),
+		[rcx]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_RCX])),
+		[rdx]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_RDX])),
+		[rsi]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_RSI])),
+		[rdi]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_RDI])),
+		[rbp]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_RBP])),
+		[r8]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_R8])),
+		[r9]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_R9])),
+		[r10]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_R10])),
+		[r11]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_R11])),
+		[r12]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_R12])),
+		[r13]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_R13])),
+		[r14]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_R14])),
+		[r15]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_R15])),
+		[cr2]"i"(offsetof(struct vcpu, arch.cr2)),
+		[wordsize]"i"(sizeof(ulong))
+	      : "cc", "memory"
+		, "rax", "rbx", "rdi", "rsi"
+		, "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
+	      );
 
 }
 
@@ -181,7 +265,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       //kvm_set_sregs((user_addr_t)pData);
       return 0;
     case KVM_RUN:
-      //kvm_run();
+      kvm_run(vcpu);
       return 0;
     default:
       break;
