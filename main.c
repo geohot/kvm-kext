@@ -396,7 +396,6 @@ extern const ulong vmexit_handler;
 extern const ulong guest_entry_point;
 
 void kvm_run(struct vcpu *vcpu) {
-  vcpu_init();
 
   //vmcs_writel(GUEST_RSP, &stackk[20]);
   vmcs_writel(GUEST_RIP, guest_entry_point);
@@ -446,7 +445,7 @@ void kvm_run(struct vcpu *vcpu) {
 
 		/* Enter guest mode */
 		"jne 1f \n\t"
-		//__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1:\n"
     __ex(ASM_VMX_VMRESUME) "\n\t"
@@ -624,7 +623,7 @@ static void vcpu_init() {
   vmcs_writel(EPT_POINTER, pptr);*/
 
   // required to set the reserved bit
-  vmcs_writel(GUEST_RFLAGS, 2);
+  vmcs_writel(GUEST_RFLAGS, 2 | (1 << 15) | (1 << 3));
 
   //printf("vmexit: %lx\n", vmexit_handler);
   vmcs_writel(HOST_RIP, &vmexit_handler);
@@ -692,6 +691,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       vcpu->vmcs = allocate_vmcs();
       vmcs_clear(vcpu->vmcs);
       vmcs_load(vcpu->vmcs);
+      vcpu_init();
       return 0;
     case KVM_SET_USER_MEMORY_REGION:
       return 0;
@@ -709,14 +709,14 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       return 0;
     case KVM_SET_REGS:
       if (pData == NULL) return EINVAL;
-      //kvm_set_regs(vcpu, (struct kvm_regs *)pData);
+      kvm_set_regs(vcpu, (struct kvm_regs *)pData);
       return 0;
     case KVM_GET_SREGS:
       //kvm_get_sregs((user_addr_t)pData);
       return 0;
     case KVM_SET_SREGS:
       if (pData == NULL) return EINVAL;
-      //kvm_set_sregs(vcpu, (struct kvm_sregs *)pData);
+      kvm_set_sregs(vcpu, (struct kvm_sregs *)pData);
       return 0;
     case KVM_RUN:
       kvm_run(vcpu);
