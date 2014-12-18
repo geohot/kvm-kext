@@ -70,7 +70,7 @@ static void initialize_naturalwidth_host_guest_state(void) {
   vmcs_writel(HOST_CR4,value); 
   vmcs_writel(GUEST_CR4,value); 
 
-  asm volatile("mov $0xc0000100, %rcx\n");
+  /*asm volatile("mov $0xc0000100, %rcx\n");
   asm volatile("rdmsr\n" :"=a"(fs_low) : :"%rdx");
   asm volatile ("shl $32, %%rdx\n" :"=d"(value));
   value |= fs_low;
@@ -82,8 +82,7 @@ static void initialize_naturalwidth_host_guest_state(void) {
   asm volatile ("shl $32, %%rdx\n" :"=d"(value));
   value |= gs_low;
   vmcs_writel(HOST_GS_BASE,value); 
-  vmcs_writel(GUEST_GS_BASE,value); 
-
+  vmcs_writel(GUEST_GS_BASE,value);*/
 }
 
 
