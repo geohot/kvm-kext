@@ -18,6 +18,7 @@
 #include "vmx_shims.h"
 #include "vmcs.h"
 
+// copies all host selectors, 0xc00 - 0xc0c
 static void initialize_16bit_host_guest_state(void) {
   u16 	    value;
   asm ("movw %%es, %%ax\n" :"=a"(value));
@@ -52,6 +53,119 @@ static void initialize_16bit_host_guest_state(void) {
   vmcs_write16(GUEST_LDTR_SELECTOR,value); 
 }
 
+// host gdtr, idtr, tr, sysenter_cs
+static void initialize_32bit_host_guest_state(void) {
+   unsigned long field;
+   u32 	    value;
+   u64      gdtb;
+   u64      trbase;
+   u64      trbase_lo;
+   u64      trbase_hi;
+   u64 	    realtrbase;
+   u64      idtb;
+   u32      unusable_ar = 0x10000;
+   u32      usable_ar; 
+   u16      sel_value; 
+
+   vmcs_write32(GUEST_ES_LIMIT,0xFFFFFFFF); 
+   vmcs_write32(GUEST_DS_LIMIT,0xFFFFFFFF); 
+   vmcs_write32(GUEST_FS_LIMIT,0xFFFFFFFF); 
+   vmcs_write32(GUEST_GS_LIMIT,0xFFFFFFFF); 
+   vmcs_write32(GUEST_LDTR_LIMIT,0); 
+   vmcs_write32(GUEST_SS_LIMIT,0xFFFFFFFF); 
+   vmcs_write32(GUEST_CS_LIMIT,0xFFFFFFFF); 
+
+   vmcs_write32(GUEST_ES_AR_BYTES, unusable_ar);
+   vmcs_write32(GUEST_DS_AR_BYTES, unusable_ar);
+   vmcs_write32(GUEST_FS_AR_BYTES, unusable_ar);
+   vmcs_write32(GUEST_GS_AR_BYTES, unusable_ar);
+   vmcs_write32(GUEST_LDTR_AR_BYTES, unusable_ar);
+
+   asm ("movw %%cs, %%ax\n" : "=a"(sel_value));
+   asm("lar %%eax,%%eax\n" :"=a"(usable_ar) :"a"(sel_value)); 
+   usable_ar = usable_ar>>8;
+   usable_ar &= 0xf0ff; //clear bits 11:8 
+   vmcs_write32(GUEST_CS_AR_BYTES, usable_ar);
+   
+   asm ("movw %%ss, %%ax\n" : "=a"(sel_value));
+   asm("lar %%eax,%%eax\n" :"=a"(usable_ar) :"a"(sel_value)); 
+   usable_ar = usable_ar>>8;
+   usable_ar &= 0xf0ff; //clear bits 11:8 
+   vmcs_write32(GUEST_SS_AR_BYTES, usable_ar);
+
+  // other tr things
+   asm("mov $0x40, %rax\n");
+   asm("lsl %%eax, %%eax\n" :"=a"(value));
+   vmcs_write32(GUEST_TR_LIMIT,value); 
+
+   asm("str %%ax\n" : "=a"(sel_value));
+   asm("lar %%eax,%%eax\n" :"=a"(usable_ar) :"a"(sel_value)); 
+   usable_ar = usable_ar>>8;
+   vmcs_write32(GUEST_TR_AR_BYTES, usable_ar);
+
+  // gdt things
+   asm("sgdt %0\n" : :"m"(gdtb));
+   value = gdtb&0x0ffff;
+   gdtb = gdtb>>16; //base
+
+   if((gdtb>>47&0x1)){
+     gdtb |= 0xffff000000000000ull;
+   }
+   vmcs_write32(GUEST_GDTR_LIMIT,value); 
+   vmcs_writel(GUEST_GDTR_BASE, gdtb);
+   vmcs_writel(HOST_GDTR_BASE, gdtb);
+
+  // tr things
+   trbase = gdtb + 0x40;
+   if((trbase>>47&0x1)){
+   trbase |= 0xffff000000000000ull;
+   }
+
+   // SS segment override
+   asm("mov %0,%%rax\n" 
+       ".byte 0x36\n"
+       "movq (%%rax),%%rax\n"
+        :"=a"(trbase_lo) :"0"(trbase) 
+       );
+
+   realtrbase = ((trbase_lo>>16) & (0x0ffff)) | (((trbase_lo>>32)&0x000000ff) << 16) | (((trbase_lo>>56)&0xff) << 24);
+
+   // SS segment override for upper32 bits of base in ia32e mode
+   asm("mov %0,%%rax\n" 
+       ".byte 0x36\n"
+       "movq 8(%%rax),%%rax\n"
+        :"=a"(trbase_hi) :"0"(trbase) 
+       );
+
+   realtrbase = realtrbase | (trbase_hi<<32) ;
+   vmcs_writel(GUEST_TR_BASE, realtrbase);
+   vmcs_writel(HOST_TR_BASE, realtrbase);
+
+   asm("sidt %0\n" : :"m"(idtb));
+   value = idtb&0x0ffff;
+   idtb = idtb>>16; //base
+
+   if((idtb>>47&0x1)){
+     idtb |= 0xffff000000000000ull;
+   }
+
+   vmcs_write32(GUEST_IDTR_LIMIT, value); 
+   vmcs_writel(GUEST_IDTR_BASE, idtb);
+   vmcs_writel(HOST_IDTR_BASE, idtb);
+
+   vmcs_write32(GUEST_INTERRUPTIBILITY_INFO, 0); 
+   vmcs_write32(GUEST_ACTIVITY_STATE, 0); 
+
+   // important
+   asm volatile("mov $0x174, %rcx\n");
+   asm("rdmsr\n");
+   asm("mov %%rax, %0\n" : :"m"(value):"memory");
+   vmcs_write32(HOST_IA32_SYSENTER_CS, value);
+   vmcs_write32(GUEST_SYSENTER_CS, value);
+}
+
+
+// host cr0, cr3, cr4, fs_base, gs_base, sysenter eip and esp
 static void initialize_naturalwidth_host_guest_state(void) {
   unsigned long field,field1;
   u64 	    value;
@@ -70,7 +184,7 @@ static void initialize_naturalwidth_host_guest_state(void) {
   vmcs_writel(HOST_CR4,value); 
   vmcs_writel(GUEST_CR4,value); 
 
-  /*asm volatile("mov $0xc0000100, %rcx\n");
+  asm volatile("mov $0xc0000100, %rcx\n");
   asm volatile("rdmsr\n" :"=a"(fs_low) : :"%rdx");
   asm volatile ("shl $32, %%rdx\n" :"=d"(value));
   value |= fs_low;
@@ -82,7 +196,21 @@ static void initialize_naturalwidth_host_guest_state(void) {
   asm volatile ("shl $32, %%rdx\n" :"=d"(value));
   value |= gs_low;
   vmcs_writel(HOST_GS_BASE,value); 
-  vmcs_writel(GUEST_GS_BASE,value);*/
+  vmcs_writel(GUEST_GS_BASE,value);
+
+  asm volatile("mov $0x176, %rcx\n");
+  asm("rdmsr\n");
+  asm("mov %%rax, %0\n" : :"m"(value):"memory");
+  asm("or %0, %%rdx\n"  : :"m"(value):"memory");
+  vmcs_writel(GUEST_SYSENTER_ESP, value);
+  vmcs_writel(HOST_IA32_SYSENTER_ESP, value);
+
+  asm volatile("mov $0x175, %rcx\n");
+  asm("rdmsr\n");
+  asm("mov %%rax, %0\n" : :"m"(value):"memory");
+  asm("or %0, %%rdx\n"  : :"m"(value):"memory");
+  vmcs_writel(GUEST_SYSENTER_EIP, value);
+  vmcs_writel(HOST_IA32_SYSENTER_EIP, value);
 }
 
 
@@ -307,6 +435,8 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
 	return 0;
 }
 
+extern const ulong vmexit_handler;
+
 void kvm_run(struct vcpu *vcpu) {
 	asm(
 		/* Store host registers */
@@ -349,8 +479,10 @@ void kvm_run(struct vcpu *vcpu) {
 		__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1: " __ex(ASM_VMX_VMRESUME) "\n\t"
-		"2: "
+		"2:\n"
 		/* Save guest registers, load host registers, keep flags */
+    ".global _vmexit_handler\n\t"
+    "_vmexit_handler:\n\t"
 		"mov %0, %c[wordsize](%%rsp) \n\t"
 		"pop %0 \n\t"
 		"mov %%rax, %c[rax](%0) \n\t"
@@ -373,6 +505,11 @@ void kvm_run(struct vcpu *vcpu) {
 
 		"pop  %%rbp; pop  %%rdx \n\t"
 		"setbe %c[fail](%0) \n\t"
+
+    /*".pushsection .rodata \n\t"
+    ".global vmx_return \n\t"
+    "vmx_return: .quad 2b \n\t"
+    ".popsection"*/
 	      : : "c"(vcpu), "d"((unsigned long)HOST_RSP),
 		[launched]"i"(offsetof(struct vcpu, __launched)),
 		[fail]"i"(offsetof(struct vcpu, fail)),
@@ -489,9 +626,11 @@ static void vcpu_init() {
   // required to set the reserved bit
   vmcs_writel(GUEST_RFLAGS, 2);
 
+  vmcs_writel(HOST_RIP, &vmexit_handler);
 
   initialize_16bit_host_guest_state();
   initialize_naturalwidth_host_guest_state();
+  initialize_32bit_host_guest_state();
 
 
   /*vmcs_write64(VM_EXIT_MSR_LOAD_ADDR, __pa(vcpu->msr_autoload.host));
@@ -609,6 +748,7 @@ static void *g_kvm_ctl;
 kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
   int ret;
   printf("MyKext has started.\n");
+  printf("host rip is %lx\n", &vmexit_handler);
 
   ret = host_vmxon(FALSE);
   IOLog("host_vmxon: %d\n", ret);

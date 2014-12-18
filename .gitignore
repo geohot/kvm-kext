@@ -1,5 +1,7 @@
 .*.swp
 .*.swo
+.*.swn
 kvm.kext/Contents/MacOS/kvm
 tests/a.out
+main.s
 
