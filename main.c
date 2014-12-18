@@ -18,6 +18,76 @@
 #include "vmx_shims.h"
 #include "vmcs.h"
 
+static void initialize_16bit_host_guest_state(void) {
+  u16 	    value;
+  asm ("movw %%es, %%ax\n" :"=a"(value));
+  vmcs_write16(HOST_ES_SELECTOR,value); 
+  vmcs_write16(GUEST_ES_SELECTOR,value); 
+
+  asm ("movw %%cs, %%ax\n" : "=a"(value));
+  vmcs_write16(HOST_CS_SELECTOR,value); 
+  vmcs_write16(GUEST_CS_SELECTOR,value); 
+
+  asm ("movw %%ss, %%ax\n" : "=a"(value));
+  vmcs_write16(HOST_SS_SELECTOR,value); 
+  vmcs_write16(GUEST_SS_SELECTOR,value); 
+
+  asm ("movw %%ds, %%ax\n" : "=a"(value));
+  vmcs_write16(HOST_DS_SELECTOR,value); 
+  vmcs_write16(GUEST_DS_SELECTOR,value); 
+
+  asm ("movw %%fs, %%ax\n" : "=a"(value));
+  vmcs_write16(HOST_FS_SELECTOR,value); 
+  vmcs_write16(GUEST_FS_SELECTOR,value); 
+
+  asm ("movw %%gs, %%ax\n" : "=a"(value));
+  vmcs_write16(HOST_GS_SELECTOR,value); 
+  vmcs_write16(GUEST_GS_SELECTOR,value); 
+
+  asm("str %%ax\n" : "=a"(value));
+  vmcs_write16(HOST_TR_SELECTOR,value); 
+  vmcs_write16(GUEST_TR_SELECTOR,value); 
+
+  asm("sldt %%ax\n" : "=a"(value));
+  vmcs_write16(GUEST_LDTR_SELECTOR,value); 
+}
+
+static void initialize_naturalwidth_host_guest_state(void) {
+  unsigned long field,field1;
+  u64 	    value;
+  int      fs_low;
+  int      gs_low;
+
+  asm ("movq %%cr0, %%rax\n" :"=a"(value));
+  vmcs_writel(HOST_CR0,value); 
+  vmcs_writel(GUEST_CR0,value); 
+
+  asm ("movq %%cr3, %%rax\n" :"=a"(value));
+  vmcs_writel(HOST_CR3,value); 
+  vmcs_writel(GUEST_CR3,value); 
+
+  asm ("movq %%cr4, %%rax\n" :"=a"(value));
+  vmcs_writel(HOST_CR4,value); 
+  vmcs_writel(GUEST_CR4,value); 
+
+  asm volatile("mov $0xc0000100, %rcx\n");
+  asm volatile("rdmsr\n" :"=a"(fs_low) : :"%rdx");
+  asm volatile ("shl $32, %%rdx\n" :"=d"(value));
+  value |= fs_low;
+  vmcs_writel(HOST_FS_BASE,value); 
+  vmcs_writel(GUEST_FS_BASE,value); 
+
+  asm volatile("mov $0xc0000101, %rcx\n");
+  asm volatile("rdmsr\n" :"=a"(gs_low) : :"%rdx");
+  asm volatile ("shl $32, %%rdx\n" :"=d"(value));
+  value |= gs_low;
+  vmcs_writel(HOST_GS_BASE,value); 
+  vmcs_writel(GUEST_GS_BASE,value); 
+
+}
+
+
+
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
 //struct vcpu only_cpu;
 
@@ -145,6 +215,8 @@ void kvm_set_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
 }*/
 
 int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
+  //return 0;
+
 	kvm_set_segment(vcpu, &sregs->cs, VCPU_SREG_CS);
 	kvm_set_segment(vcpu, &sregs->ds, VCPU_SREG_DS);
 	kvm_set_segment(vcpu, &sregs->es, VCPU_SREG_ES);
@@ -158,6 +230,15 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   vmcs_writel(GUEST_CR0, sregs->cr0);
   vmcs_writel(GUEST_CR3, sregs->cr3);
   vmcs_writel(GUEST_CR4, sregs->cr4);
+
+  vmcs_write32(GUEST_IDTR_LIMIT, sregs->idt.limit);
+  vmcs_writel(GUEST_IDTR_BASE, sregs->idt.base);
+  vmcs_write32(GUEST_GDTR_LIMIT, sregs->gdt.limit);
+  vmcs_writel(GUEST_GDTR_BASE, sregs->gdt.base);
+
+  vmcs_writel(GUEST_IA32_EFER, sregs->efer);
+
+
 
 	/*struct msr_data apic_base_msr;
 	int mmu_reset_needed = 0;
@@ -365,23 +446,28 @@ static const u32 vmx_msr_index[] = {
 static void vcpu_init() {
   int i;
 
-  vmcs_write32(PAGE_FAULT_ERROR_CODE_MASK, 0);
-  vmcs_write32(PAGE_FAULT_ERROR_CODE_MATCH, 0);
-  vmcs_write32(CR3_TARGET_COUNT, 0);
-
   vmcs_write16(HOST_FS_SELECTOR, 0);
   vmcs_write16(HOST_GS_SELECTOR, 0);
 
   vmcs_writel(CR0_GUEST_HOST_MASK, ~0UL);
 
   // copied from vtx.c written
-  vmcs_writel(PIN_BASED_VM_EXEC_CONTROL, 0xE9);  // all enabled, 24.6.1
 
-  vmcs_writel(CPU_BASED_VM_EXEC_CONTROL, 0x81008080);
-  vmcs_writel(SECONDARY_VM_EXEC_CONTROL, 0x80);  // disable EPT for now
+  //vmcs_writel(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_POSTED_INTR | PIN_BASED_VMX_PREEMPTION_TIMER | PIN_BASED_VIRTUAL_NMIS | PIN_BASED_NMI_EXITING | PIN_BASED_EXT_INTR_MASK);  // all enabled, 24.6.1
 
-  vmcs_writel(VM_ENTRY_CONTROLS, 0);
-  vmcs_writel(VM_EXIT_CONTROLS, 0);
+  //vmcs_writel(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_HLT_EXITING | CPU_BASED_CR3_LOAD_EXITING | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
+  //vmcs_writel(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
+
+  vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, 0x1f);
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, 0x0401e172);
+  vmcs_write32(EXCEPTION_BITMAP, 0xffffffff);
+
+  vmcs_write32(PAGE_FAULT_ERROR_CODE_MASK, 0);
+  vmcs_write32(PAGE_FAULT_ERROR_CODE_MATCH, 0);
+  vmcs_write32(CR3_TARGET_COUNT, 0);  // 0 is less than 4
+
+  vmcs_write32(VM_EXIT_CONTROLS, 0x36fff);
+  vmcs_write32(VM_ENTRY_CONTROLS, 0x13ff);
   
   // because these are 0 we don't need addresses
   vmcs_write32(VM_EXIT_MSR_STORE_COUNT, 0);
@@ -390,9 +476,23 @@ static void vcpu_init() {
 
   // VMCS shadowing isn't set, from 24.4
   vmcs_writel(VMCS_LINK_POINTER, ~0);
-  vmcs_writel(VMCS_LINK_POINTER_HIGH, ~0);
+  vmcs_writel(GUEST_IA32_DEBUGCTL, ~0);
+
+  vmcs_write32(VM_ENTRY_EXCEPTION_ERROR_CODE, 0);
+  vmcs_write32(VM_ENTRY_INSTRUCTION_LEN, 0);
+  vmcs_write32(TPR_THRESHOLD, 0);
+
+  // EPT allocation
+	/*void *pptr = IOMallocAligned(PAGE_SIZE*8, PAGE_SIZE);
+	bzero(pptr, PAGE_SIZE);
+  vmcs_writel(EPT_POINTER, pptr);*/
+
+  // required to set the reserved bit
+  vmcs_writel(GUEST_RFLAGS, 2);
 
 
+  initialize_16bit_host_guest_state();
+  initialize_naturalwidth_host_guest_state();
 
 
   /*vmcs_write64(VM_EXIT_MSR_LOAD_ADDR, __pa(vcpu->msr_autoload.host));
