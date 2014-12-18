@@ -392,13 +392,16 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
 	return 0;
 }
 
-extern const ulong vmexit_handler;
-extern const ulong guest_entry_point;
+extern const void* vmexit_handler;
+extern const void* guest_entry_point;
+
 
 void kvm_run(struct vcpu *vcpu) {
+  vmcs_writel(GUEST_RSP, 0);
+  vmcs_writel(GUEST_RIP, &guest_entry_point);
 
-  //vmcs_writel(GUEST_RSP, &stackk[20]);
-  vmcs_writel(GUEST_RIP, guest_entry_point);
+  //vmcs_writel(GUEST_RSP, vcpu->arch.regs[VCPU_REGS_RSP]);
+  //vmcs_writel(GUEST_RIP, vcpu->arch.regs[VCPU_REGS_RIP]);
 
   //vmcs_writel(GUEST_RSP, 0);
   //vmcs_writel(GUEST_RIP, 0xAAAAAAAA);
@@ -445,7 +448,7 @@ void kvm_run(struct vcpu *vcpu) {
 
 		/* Enter guest mode */
 		"jne 1f \n\t"
-		//__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1:\n"
     __ex(ASM_VMX_VMRESUME) "\n\t"
@@ -455,6 +458,7 @@ void kvm_run(struct vcpu *vcpu) {
     "_guest_entry_point:\n\t"
     "vmcall\n\t"
 		/* Save guest registers, load host registers, keep flags */
+    "nop\n\t"
     ".global _vmexit_handler\n\t"
     "_vmexit_handler:\n\t"
     "nop\n\t"
@@ -482,10 +486,8 @@ void kvm_run(struct vcpu *vcpu) {
 		"pop  %%rbp\n\t pop  %%rdx \n\t"
 		"setbe %c[fail](%0) \n\t"
 
-    /*".pushsection .rodata \n\t"
-    ".global vmx_return \n\t"
-    "vmx_return: .quad 2b \n\t"
-    ".popsection"*/
+    // fix?
+    "sti \n\t"
 	      : : "c"(vcpu), "d"((unsigned long)HOST_RSP),
 		[launched]"i"(offsetof(struct vcpu, __launched)),
 		[fail]"i"(offsetof(struct vcpu, fail)),
@@ -582,7 +584,8 @@ static void vcpu_init() {
 
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, rdmsr64(MSR_IA32_VMX_TRUE_PINBASED_CTLS));
   vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, rdmsr64(MSR_IA32_VMX_TRUE_PROCBASED_CTLS));
-  vmcs_write32(VM_EXIT_CONTROLS, rdmsr64(MSR_IA32_VMX_TRUE_VMEXIT_CTLS) | VM_EXIT_HOST_ADDR_SPACE_SIZE);
+  //vmcs_write32(VM_EXIT_CONTROLS, rdmsr64(MSR_IA32_VMX_TRUE_VMEXIT_CTLS) | VM_EXIT_HOST_ADDR_SPACE_SIZE);
+  vmcs_write32(VM_EXIT_CONTROLS, rdmsr64(MSR_IA32_VMX_TRUE_VMEXIT_CTLS));
   vmcs_write32(VM_ENTRY_CONTROLS, rdmsr64(MSR_IA32_VMX_TRUE_VMENTRY_CTLS) | VM_ENTRY_IA32E_MODE);
 
   /*vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
@@ -709,14 +712,14 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       return 0;
     case KVM_SET_REGS:
       if (pData == NULL) return EINVAL;
-      kvm_set_regs(vcpu, (struct kvm_regs *)pData);
+      //kvm_set_regs(vcpu, (struct kvm_regs *)pData);
       return 0;
     case KVM_GET_SREGS:
       //kvm_get_sregs((user_addr_t)pData);
       return 0;
     case KVM_SET_SREGS:
       if (pData == NULL) return EINVAL;
-      kvm_set_sregs(vcpu, (struct kvm_sregs *)pData);
+      //kvm_set_sregs(vcpu, (struct kvm_sregs *)pData);
       return 0;
     case KVM_RUN:
       kvm_run(vcpu);
