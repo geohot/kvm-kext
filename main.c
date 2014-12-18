@@ -18,6 +18,7 @@
 #include "vmx_shims.h"
 #include "vmcs.h"
 
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
 //struct vcpu only_cpu;
 
 //#include "vmx.h"
@@ -28,13 +29,23 @@ struct vcpu_arch {
   unsigned long cr2;
 };
 
+#define NR_AUTOLOAD_MSRS 8
+
 struct vcpu {
   vmcs *vmcs;
   struct vcpu_arch arch;
   unsigned long __launched;
   unsigned long fail;
   unsigned long host_rsp;
+
+	//int                   nmsrs;
+	/*struct msr_autoload {
+		unsigned nr;
+		struct vmx_msr_entry guest[NR_AUTOLOAD_MSRS];
+		struct vmx_msr_entry host[NR_AUTOLOAD_MSRS];
+	} msr_autoload;*/
 } __vcpu;
+
 
 struct vcpu *vcpu = &__vcpu;
 
@@ -134,6 +145,20 @@ void kvm_set_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
 }*/
 
 int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
+	kvm_set_segment(vcpu, &sregs->cs, VCPU_SREG_CS);
+	kvm_set_segment(vcpu, &sregs->ds, VCPU_SREG_DS);
+	kvm_set_segment(vcpu, &sregs->es, VCPU_SREG_ES);
+	kvm_set_segment(vcpu, &sregs->fs, VCPU_SREG_FS);
+	kvm_set_segment(vcpu, &sregs->gs, VCPU_SREG_GS);
+	kvm_set_segment(vcpu, &sregs->ss, VCPU_SREG_SS);
+
+	kvm_set_segment(vcpu, &sregs->tr, VCPU_SREG_TR);
+	kvm_set_segment(vcpu, &sregs->ldt, VCPU_SREG_LDTR);
+
+  vmcs_writel(GUEST_CR0, sregs->cr0);
+  vmcs_writel(GUEST_CR3, sregs->cr3);
+  vmcs_writel(GUEST_CR4, sregs->cr4);
+
 	/*struct msr_data apic_base_msr;
 	int mmu_reset_needed = 0;
 	int pending_vec, max_bits, idx;
@@ -188,16 +213,6 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
 		kvm_queue_interrupt(vcpu, pending_vec, false);
 		pr_debug("Set back pending irq %d\n", pending_vec);
 	}*/
-
-	kvm_set_segment(vcpu, &sregs->cs, VCPU_SREG_CS);
-	kvm_set_segment(vcpu, &sregs->ds, VCPU_SREG_DS);
-	kvm_set_segment(vcpu, &sregs->es, VCPU_SREG_ES);
-	kvm_set_segment(vcpu, &sregs->fs, VCPU_SREG_FS);
-	kvm_set_segment(vcpu, &sregs->gs, VCPU_SREG_GS);
-	kvm_set_segment(vcpu, &sregs->ss, VCPU_SREG_SS);
-
-	kvm_set_segment(vcpu, &sregs->tr, VCPU_SREG_TR);
-	kvm_set_segment(vcpu, &sregs->ldt, VCPU_SREG_LDTR);
 
 	//update_cr8_intercept(vcpu);
 
@@ -305,9 +320,12 @@ void kvm_run(struct vcpu *vcpu) {
 	      );
 
   vcpu->__launched = 1;
+  unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
   unsigned long exit_reason = vmcs_read32(VM_EXIT_REASON);
+  unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
   unsigned long host_rsp = vmcs_readl(HOST_RSP);
-  printf("exit %llx rsp %llx\n", exit_reason, host_rsp);
+  unsigned long host_cr3 = vmcs_readl(HOST_CR3);
+  printf("entry %ld exit %lx error %ld rsp %lx %lx\n", entry_error, exit_reason, error, host_rsp, host_cr3);
 }
 
 #define __ex(x) x
@@ -336,6 +354,70 @@ static void vmcs_clear(struct vmcs *vmcs) {
 	if (error)
 		printf("kvm: vmclear fail: %p/%llx\n",
 		       vmcs, phys_addr);
+}
+
+/*#include <asm/msr-index.h>
+static const u32 vmx_msr_index[] = {
+	MSR_SYSCALL_MASK, MSR_LSTAR, MSR_CSTAR,
+	MSR_EFER, MSR_TSC_AUX, MSR_STAR,
+};*/
+
+static void vcpu_init() {
+  int i;
+
+  vmcs_write32(PAGE_FAULT_ERROR_CODE_MASK, 0);
+  vmcs_write32(PAGE_FAULT_ERROR_CODE_MATCH, 0);
+  vmcs_write32(CR3_TARGET_COUNT, 0);
+
+  vmcs_write16(HOST_FS_SELECTOR, 0);
+  vmcs_write16(HOST_GS_SELECTOR, 0);
+
+  vmcs_writel(CR0_GUEST_HOST_MASK, ~0UL);
+
+  // copied from vtx.c written
+  vmcs_writel(PIN_BASED_VM_EXEC_CONTROL, 0xE9);  // all enabled, 24.6.1
+
+  vmcs_writel(CPU_BASED_VM_EXEC_CONTROL, 0x81008080);
+  vmcs_writel(SECONDARY_VM_EXEC_CONTROL, 0x80);  // disable EPT for now
+
+  vmcs_writel(VM_ENTRY_CONTROLS, 0);
+  vmcs_writel(VM_EXIT_CONTROLS, 0);
+  
+  // because these are 0 we don't need addresses
+  vmcs_write32(VM_EXIT_MSR_STORE_COUNT, 0);
+  vmcs_write32(VM_EXIT_MSR_LOAD_COUNT, 0);
+  vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, 0);
+
+  // VMCS shadowing isn't set, from 24.4
+  vmcs_writel(VMCS_LINK_POINTER, ~0);
+  vmcs_writel(VMCS_LINK_POINTER_HIGH, ~0);
+
+
+
+
+  /*vmcs_write64(VM_EXIT_MSR_LOAD_ADDR, __pa(vcpu->msr_autoload.host));
+  vmcs_write64(VM_ENTRY_MSR_LOAD_ADDR, __pa(vcpu->msr_autoload.guest));*/
+
+	/*for (i = 0; i < ARRAY_SIZE(vmx_msr_index); ++i) {
+		u32 index = vmx_msr_index[i];
+		u32 data_low, data_high;
+		int j = vcpu->nmsrs;
+
+		if (rdmsr_safe(index, &data_low, &data_high) < 0)
+			continue;
+		if (wrmsr_safe(index, data_low, data_high) < 0)
+			continue;
+		vcpu->guest_msrs[j].index = i;
+		vcpu->guest_msrs[j].data = 0;
+		vcpu->guest_msrs[j].mask = -1ull;
+		++vcpu->nmsrs;
+	}*/
+
+  /*rdmsrl(MSR_FS_BASE, a);
+  vmcs_writel(HOST_FS_BASE, a);
+  rdmsrl(MSR_GS_BASE, a);
+  vmcs_writel(HOST_GS_BASE, a);*/
+
 }
 
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
@@ -368,6 +450,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       vcpu->vmcs = allocate_vmcs();
       vmcs_clear(vcpu->vmcs);
       vmcs_load(vcpu->vmcs);
+      vcpu_init();
       return 0;
     case KVM_SET_USER_MEMORY_REGION:
       return 0;

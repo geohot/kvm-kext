@@ -27,6 +27,9 @@ sudo kextutil /tmp/kvm.kext/
 # load the kext
 sudo kextload -v /tmp/kvm.kext
 
+# run test
+tests/a.out
+
 # print the log
 tail /var/log/system.log
 

@@ -55,7 +55,9 @@ void *vmx_pcalloc(void) {
 }
 
 addr64_t vmx_paddr(void *va) {
-	return (ptoa_64(pmap_find_phys(kernel_pmap, (addr64_t)(uintptr_t)va)));
+	addr64_t ret = ptoa_64(pmap_find_phys(kernel_pmap, (addr64_t)(uintptr_t)va));
+  ret += ((u64)va) & PAGE_MASK;
+  return ret;
 }
 
 void vmx_pfree(void *va) {
