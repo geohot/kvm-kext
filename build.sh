@@ -8,8 +8,8 @@ set -e
 # rebuild the kext
 mkdir -p kvm.kext/Contents/MacOS
 #gcc -static main.c vmx.c -o kvm.kext/Contents/MacOS/kvm -fno-builtin -nostdlib -lkmod -r -I/System/Library/Frameworks/Kernel.framework/Headers -I include/ -Wall -Xlinker -kext
-#gcc -static main.c -S -fno-builtin -nostdlib -lkmod -r -I/System/Library/Frameworks/Kernel.framework/Headers -I include/ -Wall -Xlinker -kext
 
+gcc -static main.c -S -fno-builtin -nostdlib -lkmod -r -I/System/Library/Frameworks/Kernel.framework/Headers -I include/ -Wall -Xlinker -kext
 gcc -static main.c -o kvm.kext/Contents/MacOS/kvm -fno-builtin -nostdlib -lkmod -r -I/System/Library/Frameworks/Kernel.framework/Headers -I include/ -Wall -Xlinker -kext
 
 # copy
@@ -30,7 +30,7 @@ sudo kextutil /tmp/kvm.kext/
 sudo kextload -v /tmp/kvm.kext
 
 # run test
-#tests/a.out
+tests/a.out
 
 # print the log
 tail /var/log/system.log
