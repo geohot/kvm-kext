@@ -398,7 +398,7 @@ extern const void* guest_entry_point;
 unsigned long stackk[0x40];
 
 void kvm_run(struct vcpu *vcpu) {
-  vmcs_writel(GUEST_RSP, &stack[0x20]);
+  vmcs_writel(GUEST_RSP, &stackk[0x20]);
   vmcs_writel(GUEST_RIP, &guest_entry_point);
 
   //vmcs_writel(GUEST_RSP, vcpu->arch.regs[VCPU_REGS_RSP]);
@@ -449,7 +449,7 @@ void kvm_run(struct vcpu *vcpu) {
 
 		/* Enter guest mode */
 		"jne 1f \n\t"
-		__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		//__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1:\n"
     __ex(ASM_VMX_VMRESUME) "\n\t"
@@ -518,8 +518,8 @@ void kvm_run(struct vcpu *vcpu) {
 	      );
 
   // crash controlled
-  unsigned long *a = 0xAAAAAAAA;
-  printf("%d\n", *a);
+  /*unsigned long *a = 0xAAAAAAAA;
+  printf("%d\n", *a);*/
   //vcpu->__launched = 1;
 }
 
