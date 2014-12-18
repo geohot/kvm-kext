@@ -18,6 +18,20 @@
 #include "vmx_shims.h"
 #include "vmcs.h"
 
+void initialize_naturalwidth_control(void){
+  vmcs_write64(CR0_GUEST_HOST_MASK, 0);
+  vmcs_write64(CR4_GUEST_HOST_MASK, 0);
+
+  vmcs_write64(CR0_READ_SHADOW, 0);
+  vmcs_write64(CR4_READ_SHADOW, 0);
+
+  vmcs_write64(CR3_TARGET_VALUE0, 0);
+  vmcs_write64(CR3_TARGET_VALUE1, 0);
+  vmcs_write64(CR3_TARGET_VALUE2, 0);
+  vmcs_write64(CR3_TARGET_VALUE3, 0);
+}
+  
+
 // copies all host selectors, 0xc00 - 0xc0c
 static void initialize_16bit_host_guest_state(void) {
   u16 	    value;
@@ -205,6 +219,15 @@ static void initialize_naturalwidth_host_guest_state(void) {
   asm("mov %%rax, %0\n" : :"m"(value):"memory");
   vmcs_write32(GUEST_SYSENTER_CS, value);
   vmcs_write32(HOST_IA32_SYSENTER_CS, value);
+}
+
+static void initialize_64bit_control(void) {
+   vmcs_writel(IO_BITMAP_A, __pa(io_bitmap_a_region));
+   vmcs_writel(IO_BITMAP_B, __pa(io_bitmap_b_region));
+   vmcs_writel(MSR_BITMAP, __pa(msr_bitmap_phy_region));
+   vmcs_writel(VIRTUAL_APIC_PAGE_ADDR, __pa(virtual_apic_page));
+   vmcs_writel(0x200C, 0);
+   vmcs_writel(TSC_OFFSET, 0);
 }
 
 
@@ -471,10 +494,10 @@ void kvm_run(struct vcpu *vcpu) {
 
 		/* Enter guest mode */
 		"jne 1f \n\t"
-		//__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1:\n"
-    //__ex(ASM_VMX_VMRESUME) "\n\t"
+    __ex(ASM_VMX_VMRESUME) "\n\t"
 		"2:\n"
     "jmp _vmexit_handler\n\t"
     ".global _guest_entry_point\n\t"
@@ -582,10 +605,7 @@ static const u32 vmx_msr_index[] = {
 static void vcpu_init() {
   int i;
 
-  /*vmcs_write16(HOST_FS_SELECTOR, 0);
-  vmcs_write16(HOST_GS_SELECTOR, 0);*/
-
-  vmcs_writel(CR0_GUEST_HOST_MASK, ~0UL);
+  //vmcs_writel(CR0_GUEST_HOST_MASK, ~0UL);
 
   // copied from vtx.c written
 
@@ -600,6 +620,11 @@ static void vcpu_init() {
   vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR);
   vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR);
 
+  /*vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, 0x1f);
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, 0x0401e172);
+  vmcs_write32(VM_EXIT_CONTROLS, 0x36fff);
+  vmcs_write32(VM_ENTRY_CONTROLS, 0x13ff);*/
+
   vmcs_write32(PAGE_FAULT_ERROR_CODE_MASK, 0);
   vmcs_write32(PAGE_FAULT_ERROR_CODE_MATCH, 0);
   vmcs_write32(CR3_TARGET_COUNT, 0);  // 0 is less than 4
@@ -610,8 +635,8 @@ static void vcpu_init() {
   vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, 0);
 
   // VMCS shadowing isn't set, from 24.4
-  vmcs_writel(VMCS_LINK_POINTER, ~0);
-  vmcs_writel(GUEST_IA32_DEBUGCTL, ~0);
+  vmcs_write64(VMCS_LINK_POINTER, ~0);
+  vmcs_write64(GUEST_IA32_DEBUGCTL, 0);
 
   vmcs_write32(VM_ENTRY_EXCEPTION_ERROR_CODE, 0);
   vmcs_write32(VM_ENTRY_INSTRUCTION_LEN, 0);
@@ -628,8 +653,11 @@ static void vcpu_init() {
   vmcs_writel(HOST_RIP, &vmexit_handler);
 
   initialize_16bit_host_guest_state();
-  initialize_naturalwidth_host_guest_state();
+  initialize_64bit_control();
+  // initialize_64bit_host_guest_state
+  initialize_naturalwidth_control();
   initialize_32bit_host_guest_state();
+  initialize_naturalwidth_host_guest_state();
 
 
   /*vmcs_write64(VM_EXIT_MSR_LOAD_ADDR, __pa(vcpu->msr_autoload.host));
