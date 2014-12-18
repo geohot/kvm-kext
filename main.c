@@ -212,6 +212,7 @@ static void initialize_naturalwidth_host_guest_state(void) {
   vmcs_writel(HOST_IA32_SYSENTER_EIP, value);
 
   value = rdmsr64(0x174);
+  printf("sysenter_cs %lx\n", value);
   vmcs_write32(GUEST_SYSENTER_CS, value);
   vmcs_write32(HOST_IA32_SYSENTER_CS, value);
 }
@@ -398,10 +399,10 @@ void kvm_run(struct vcpu *vcpu) {
   vcpu_init();
 
   //vmcs_writel(GUEST_RSP, &stackk[20]);
-  //vmcs_writel(GUEST_RIP, guest_entry_point);
+  vmcs_writel(GUEST_RIP, guest_entry_point);
 
-  vmcs_writel(GUEST_RSP, 0);
-  vmcs_writel(GUEST_RIP, 0xAAAAAAAA);
+  //vmcs_writel(GUEST_RSP, 0);
+  //vmcs_writel(GUEST_RIP, 0xAAAAAAAA);
 
   /*u64 value;
   asm ("call tmp\n\t"
@@ -575,10 +576,15 @@ static void vcpu_init() {
   //vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_HOST_ADDR_SPACE_SIZE);
   //vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_IA32E_MODE);
 
+  printf("%lx %lx\n", rdmsr64(MSR_IA32_VMX_TRUE_PINBASED_CTLS), rdmsr64(MSR_IA32_VMX_PINBASED_CTLS));
+  printf("%lx %lx\n", rdmsr64(MSR_IA32_VMX_TRUE_PROCBASED_CTLS), rdmsr64(MSR_IA32_VMX_PROCBASED_CTLS));
+  printf("%lx %lx\n", rdmsr64(MSR_IA32_VMX_TRUE_VMEXIT_CTLS), rdmsr64(MSR_IA32_VMX_EXIT_CTLS));
+  printf("%lx %lx\n", rdmsr64(MSR_IA32_VMX_TRUE_VMENTRY_CTLS), rdmsr64(MSR_IA32_VMX_ENTRY_CTLS));
+
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, rdmsr64(MSR_IA32_VMX_TRUE_PINBASED_CTLS));
   vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, rdmsr64(MSR_IA32_VMX_TRUE_PROCBASED_CTLS));
-  vmcs_write32(VM_EXIT_CONTROLS, rdmsr64(MSR_IA32_VMX_TRUE_VMEXIT_CTLS));
-  vmcs_write32(VM_ENTRY_CONTROLS, rdmsr64(MSR_IA32_VMX_TRUE_VMENTRY_CTLS));
+  vmcs_write32(VM_EXIT_CONTROLS, rdmsr64(MSR_IA32_VMX_TRUE_VMEXIT_CTLS) | VM_EXIT_HOST_ADDR_SPACE_SIZE);
+  vmcs_write32(VM_ENTRY_CONTROLS, rdmsr64(MSR_IA32_VMX_TRUE_VMENTRY_CTLS) | VM_ENTRY_IA32E_MODE);
 
   /*vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
   vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_HOST_ADDR_SPACE_SIZE);
