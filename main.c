@@ -153,6 +153,7 @@ static void initialize_32bit_host_guest_state(void) {
        );
 
    realtrbase = realtrbase | (trbase_hi<<32) ;
+   printf("realtrbase: %lx\n", realtrbase);
    vmcs_writel(GUEST_TR_BASE, realtrbase);
    vmcs_writel(HOST_TR_BASE, realtrbase);
 
@@ -387,73 +388,6 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
 
   vmcs_writel(GUEST_IA32_EFER, sregs->efer);
 
-
-
-	/*struct msr_data apic_base_msr;
-	int mmu_reset_needed = 0;
-	int pending_vec, max_bits, idx;
-	struct desc_ptr dt;
-
-	if (!guest_cpuid_has_xsave(vcpu) && (sregs->cr4 & X86_CR4_OSXSAVE))
-		return -EINVAL;
-
-	dt.size = sregs->idt.limit;
-	dt.address = sregs->idt.base;
-	kvm_x86_ops->set_idt(vcpu, &dt);
-	dt.size = sregs->gdt.limit;
-	dt.address = sregs->gdt.base;
-	kvm_x86_ops->set_gdt(vcpu, &dt);
-
-	vcpu->arch.cr2 = sregs->cr2;
-	mmu_reset_needed |= kvm_read_cr3(vcpu) != sregs->cr3;
-	vcpu->arch.cr3 = sregs->cr3;
-	__set_bit(VCPU_EXREG_CR3, (ulong *)&vcpu->arch.regs_avail);
-
-	kvm_set_cr8(vcpu, sregs->cr8);
-
-	mmu_reset_needed |= vcpu->arch.efer != sregs->efer;
-	kvm_x86_ops->set_efer(vcpu, sregs->efer);
-	apic_base_msr.data = sregs->apic_base;
-	apic_base_msr.host_initiated = true;
-	kvm_set_apic_base(vcpu, &apic_base_msr);
-
-	mmu_reset_needed |= kvm_read_cr0(vcpu) != sregs->cr0;
-	kvm_x86_ops->set_cr0(vcpu, sregs->cr0);
-	vcpu->arch.cr0 = sregs->cr0;
-
-	mmu_reset_needed |= kvm_read_cr4(vcpu) != sregs->cr4;
-	kvm_x86_ops->set_cr4(vcpu, sregs->cr4);
-	if (sregs->cr4 & X86_CR4_OSXSAVE)
-		kvm_update_cpuid(vcpu);
-
-	idx = srcu_read_lock(&vcpu->kvm->srcu);
-	if (!is_long_mode(vcpu) && is_pae(vcpu)) {
-		load_pdptrs(vcpu, vcpu->arch.walk_mmu, kvm_read_cr3(vcpu));
-		mmu_reset_needed = 1;
-	}
-	srcu_read_unlock(&vcpu->kvm->srcu, idx);
-
-	if (mmu_reset_needed)
-		kvm_mmu_reset_context(vcpu);
-
-	max_bits = KVM_NR_INTERRUPTS;
-	pending_vec = find_first_bit(
-		(const unsigned long *)sregs->interrupt_bitmap, max_bits);
-	if (pending_vec < max_bits) {
-		kvm_queue_interrupt(vcpu, pending_vec, false);
-		pr_debug("Set back pending irq %d\n", pending_vec);
-	}*/
-
-	//update_cr8_intercept(vcpu);
-
-	/* Older userspace won't unhalt the vcpu on reset. */
-	/*if (kvm_vcpu_is_bsp(vcpu) && kvm_rip_read(vcpu) == 0xfff0 &&
-	    sregs->cs.selector == 0xf000 && sregs->cs.base == 0xffff0000 &&
-	    !is_protmode(vcpu))
-		vcpu->arch.mp_state = KVM_MP_STATE_RUNNABLE;
-
-	kvm_make_request(KVM_REQ_EVENT, vcpu);*/
-
 	return 0;
 }
 
@@ -628,7 +562,7 @@ static void vcpu_init() {
   //vmcs_writel(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
   vmcs_write32(EXCEPTION_BITMAP, 0xffffffff);
 
-  vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
+  vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_EXT_INTR_MASK | PIN_BASED_NMI_EXITING);
   vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING);
   vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR | VM_EXIT_HOST_ADDR_SPACE_SIZE);
   vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR | VM_ENTRY_IA32E_MODE);
@@ -648,7 +582,7 @@ static void vcpu_init() {
   vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, 0);
 
   // VMCS shadowing isn't set, from 24.4
-  vmcs_write64(VMCS_LINK_POINTER, ~0);
+  vmcs_write64(VMCS_LINK_POINTER, ~0LL);
   vmcs_write64(GUEST_IA32_DEBUGCTL, 0);
 
   vmcs_write32(VM_ENTRY_EXCEPTION_ERROR_CODE, 0);
