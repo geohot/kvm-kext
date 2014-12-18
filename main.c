@@ -18,6 +18,9 @@
 #include "vmx_shims.h"
 #include "vmcs.h"
 
+#define __ex(x) x
+#define __pa vmx_paddr
+
 void initialize_naturalwidth_control(void){
   vmcs_write64(CR0_GUEST_HOST_MASK, 0);
   vmcs_write64(CR4_GUEST_HOST_MASK, 0);
@@ -221,13 +224,25 @@ static void initialize_naturalwidth_host_guest_state(void) {
   vmcs_write32(HOST_IA32_SYSENTER_CS, value);
 }
 
+void *io_bitmap_a_region, *io_bitmap_b_region, *msr_bitmap_phy_region, *virtual_apic_page;
+
 static void initialize_64bit_control(void) {
-   vmcs_writel(IO_BITMAP_A, __pa(io_bitmap_a_region));
-   vmcs_writel(IO_BITMAP_B, __pa(io_bitmap_b_region));
-   vmcs_writel(MSR_BITMAP, __pa(msr_bitmap_phy_region));
-   vmcs_writel(VIRTUAL_APIC_PAGE_ADDR, __pa(virtual_apic_page));
-   vmcs_writel(0x200C, 0);
-   vmcs_writel(TSC_OFFSET, 0);
+  io_bitmap_a_region = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+  io_bitmap_b_region = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+  msr_bitmap_phy_region = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+  virtual_apic_page = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+
+	bzero(io_bitmap_a_region, PAGE_SIZE);
+	bzero(io_bitmap_b_region, PAGE_SIZE);
+	bzero(msr_bitmap_phy_region, PAGE_SIZE);
+	bzero(virtual_apic_page, PAGE_SIZE);
+
+  vmcs_writel(IO_BITMAP_A, __pa(io_bitmap_a_region));
+  vmcs_writel(IO_BITMAP_B, __pa(io_bitmap_b_region));
+  vmcs_writel(MSR_BITMAP, __pa(msr_bitmap_phy_region));
+  vmcs_writel(VIRTUAL_APIC_PAGE_ADDR, __pa(virtual_apic_page));
+  vmcs_writel(0x200C, 0);
+  vmcs_writel(TSC_OFFSET, 0);
 }
 
 
@@ -454,7 +469,10 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
 extern const ulong vmexit_handler;
 extern const ulong guest_entry_point;
 
+ulong stackk[40];
+
 void kvm_run(struct vcpu *vcpu) {
+  vmcs_writel(GUEST_RSP, &stackk[20]);
   vmcs_writel(GUEST_RIP, guest_entry_point);
 	asm(
 		/* Store host registers */
@@ -564,12 +582,11 @@ void kvm_run(struct vcpu *vcpu) {
   unsigned long exit_reason = vmcs_read32(VM_EXIT_REASON);
   unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
   unsigned long host_rsp = vmcs_readl(HOST_RSP);
+  unsigned long host_rip = vmcs_readl(HOST_RIP);
   unsigned long host_cr3 = vmcs_readl(HOST_CR3);
-  printf("entry %ld exit %lx error %ld rsp %lx %lx\n", entry_error, exit_reason, error, host_rsp, host_cr3);
+  printf("entry %ld exit %lx error %ld rsp %lx rip %lx %lx\n", entry_error, exit_reason, error, host_rsp, host_rip, host_cr3);
 }
 
-#define __ex(x) x
-#define __pa vmx_paddr
 
 static void vmcs_load(struct vmcs *vmcs) {
 	u64 phys_addr = __pa(vmcs);
@@ -733,14 +750,14 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       return 0;
     case KVM_SET_REGS:
       if (pData == NULL) return EINVAL;
-      kvm_set_regs(vcpu, (struct kvm_regs *)pData);
+      //kvm_set_regs(vcpu, (struct kvm_regs *)pData);
       return 0;
     case KVM_GET_SREGS:
       //kvm_get_sregs((user_addr_t)pData);
       return 0;
     case KVM_SET_SREGS:
       if (pData == NULL) return EINVAL;
-      kvm_set_sregs(vcpu, (struct kvm_sregs *)pData);
+      //kvm_set_sregs(vcpu, (struct kvm_sregs *)pData);
       return 0;
     case KVM_RUN:
       kvm_run(vcpu);
