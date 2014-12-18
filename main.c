@@ -394,21 +394,26 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
 extern const ulong vmexit_handler;
 extern const ulong guest_entry_point;
 
-ulong stackk[40];
-
 void kvm_run(struct vcpu *vcpu) {
   vcpu_init();
 
-  vmcs_writel(GUEST_RSP, &stackk[20]);
-  vmcs_writel(GUEST_RIP, guest_entry_point);
+  //vmcs_writel(GUEST_RSP, &stackk[20]);
+  //vmcs_writel(GUEST_RIP, guest_entry_point);
+
+  vmcs_writel(GUEST_RSP, 0);
+  vmcs_writel(GUEST_RIP, 0xAAAAAAAA);
+
+  /*u64 value;
+  asm ("call tmp\n\t"
+    "tmp:\n\t"
+    "pop %%rax\n" :"=a"(value));
+  printf("rip: %lx\n", value);*/
 
 	asm(
 		/* Store host registers */
-		"push %%rdx; push %%rbp;"
+		"push %%rdx\n\tpush %%rbp\n\t"
 		"push %%rcx \n\t" /* placeholder for guest rcx */
 		"push %%rcx \n\t"
-		"cmp %%rsp, %c[host_rsp](%0) \n\t"
-		"je 1f \n\t"
 		"mov %%rsp, %c[host_rsp](%0) \n\t"
 		__ex(ASM_VMX_VMWRITE_RSP_RDX) "\n\t"
 		"1: \n\t"
@@ -448,7 +453,7 @@ void kvm_run(struct vcpu *vcpu) {
     "jmp _vmexit_handler\n\t"
     ".global _guest_entry_point\n\t"
     "_guest_entry_point:\n\t"
-    "hlt\n\t"
+    "vmcall\n\t"
 		/* Save guest registers, load host registers, keep flags */
     ".global _vmexit_handler\n\t"
     "_vmexit_handler:\n\t"
@@ -474,7 +479,7 @@ void kvm_run(struct vcpu *vcpu) {
 		"mov %%cr2, %%rax   \n\t"
 		"mov %%rax, %c[cr2](%0) \n\t"
 
-		"pop  %%rbp; pop  %%rdx \n\t"
+		"pop  %%rbp\n\t pop  %%rdx \n\t"
 		"setbe %c[fail](%0) \n\t"
 
     /*".pushsection .rodata \n\t"
@@ -562,10 +567,28 @@ static void vcpu_init() {
   //vmcs_writel(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
   vmcs_write32(EXCEPTION_BITMAP, 0xffffffff);
 
-  vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_EXT_INTR_MASK | PIN_BASED_NMI_EXITING);
-  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING);
-  vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR | VM_EXIT_HOST_ADDR_SPACE_SIZE);
-  vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR | VM_ENTRY_IA32E_MODE);
+  //vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_EXT_INTR_MASK | PIN_BASED_NMI_EXITING);
+  //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING);
+
+  //vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
+  //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
+  //vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_HOST_ADDR_SPACE_SIZE);
+  //vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_IA32E_MODE);
+
+  vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, rdmsr64(MSR_IA32_VMX_TRUE_PINBASED_CTLS));
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, rdmsr64(MSR_IA32_VMX_TRUE_PROCBASED_CTLS));
+  vmcs_write32(VM_EXIT_CONTROLS, rdmsr64(MSR_IA32_VMX_TRUE_VMEXIT_CTLS));
+  vmcs_write32(VM_ENTRY_CONTROLS, rdmsr64(MSR_IA32_VMX_TRUE_VMENTRY_CTLS));
+
+  /*vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
+  vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_HOST_ADDR_SPACE_SIZE);
+  vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_IA32E_MODE);*/
+
+  //vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR | VM_EXIT_HOST_ADDR_SPACE_SIZE);
+  //vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR | VM_ENTRY_IA32E_MODE);
+
+  /*vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR | VM_EXIT_HOST_ADDR_SPACE_SIZE);
+  vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR);*/
 
   /*vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, 0x1f);
   vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, 0x0401e172);
