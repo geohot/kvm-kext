@@ -21,6 +21,8 @@
 #define __ex(x) x
 #define __pa vmx_paddr
 
+static void vcpu_init();
+
 void initialize_naturalwidth_control(void){
   vmcs_write64(CR0_GUEST_HOST_MASK, 0);
   vmcs_write64(CR4_GUEST_HOST_MASK, 0);
@@ -125,14 +127,14 @@ static void initialize_32bit_host_guest_state(void) {
    value = gdtb&0x0ffff;
    gdtb = gdtb>>16; //base
 
-   if((gdtb>>47&0x1)){ gdtb |= 0xffff000000000000ull; }
+   if(((gdtb>>47)&0x1)){ gdtb |= 0xffff000000000000ull; }
    vmcs_write32(GUEST_GDTR_LIMIT,value); 
    vmcs_writel(GUEST_GDTR_BASE, gdtb);
    vmcs_writel(HOST_GDTR_BASE, gdtb);
 
   // tr things
    trbase = gdtb + 0x40;
-   if((trbase>>47&0x1)){ trbase |= 0xffff000000000000ull; }
+   if(((trbase>>47)&0x1)){ trbase |= 0xffff000000000000ull; }
 
    // SS segment override
    asm("mov %0,%%rax\n" 
@@ -158,7 +160,7 @@ static void initialize_32bit_host_guest_state(void) {
    value = idtb&0x0ffff;
    idtb = idtb>>16; //base
 
-   if((idtb>>47&0x1)){ idtb |= 0xffff000000000000ull; }
+   if(((idtb>>47)&0x1)){ idtb |= 0xffff000000000000ull; }
    vmcs_write32(GUEST_IDTR_LIMIT, value); 
    vmcs_writel(GUEST_IDTR_BASE, idtb);
    vmcs_writel(HOST_IDTR_BASE, idtb);
@@ -188,38 +190,27 @@ static void initialize_naturalwidth_host_guest_state(void) {
   vmcs_writel(HOST_CR4,value); 
   vmcs_writel(GUEST_CR4,value); 
 
-  asm volatile("mov $0xc0000100, %rcx\n");
-  asm volatile("rdmsr\n" :"=a"(fs_low) : :"%rdx");
-  asm volatile ("shl $32, %%rdx\n" :"=d"(value));
-  value |= fs_low;
+  value = rdmsr64(0xc0000100);
+  printf("fs_base %lx\n", value);
   vmcs_writel(HOST_FS_BASE,value); 
   vmcs_writel(GUEST_FS_BASE,value); 
 
-  asm volatile("mov $0xc0000101, %rcx\n");
-  asm volatile("rdmsr\n" :"=a"(gs_low) : :"%rdx");
-  asm volatile ("shl $32, %%rdx\n" :"=d"(value));
-  value |= gs_low;
+  value = rdmsr64(0xc0000101);
+  printf("gs_base %lx\n", value);
   vmcs_writel(HOST_GS_BASE,value); 
   vmcs_writel(GUEST_GS_BASE,value);
 
-  asm volatile("mov $0x176, %rcx\n");
-  asm("rdmsr\n");
-  asm("mov %%rax, %0\n" : :"m"(value):"memory");
-  asm("or %0, %%rdx\n"  : :"m"(value):"memory");
+  value = rdmsr64(0x176);
+  printf("sysenter_esp %lx\n", value);
   vmcs_writel(GUEST_SYSENTER_ESP, value);
   vmcs_writel(HOST_IA32_SYSENTER_ESP, value);
 
-  asm volatile("mov $0x175, %rcx\n");
-  asm("rdmsr\n");
-  asm("mov %%rax, %0\n" : :"m"(value):"memory");
-  asm("or %0, %%rdx\n"  : :"m"(value):"memory");
+  value = rdmsr64(0x175);
+  printf("sysenter_eip %lx\n", value);
   vmcs_writel(GUEST_SYSENTER_EIP, value);
   vmcs_writel(HOST_IA32_SYSENTER_EIP, value);
 
-  // important
-  asm volatile("mov $0x174, %rcx\n");
-  asm("rdmsr\n");
-  asm("mov %%rax, %0\n" : :"m"(value):"memory");
+  value = rdmsr64(0x174);
   vmcs_write32(GUEST_SYSENTER_CS, value);
   vmcs_write32(HOST_IA32_SYSENTER_CS, value);
 }
@@ -472,8 +463,11 @@ extern const ulong guest_entry_point;
 ulong stackk[40];
 
 void kvm_run(struct vcpu *vcpu) {
+  vcpu_init();
+
   vmcs_writel(GUEST_RSP, &stackk[20]);
   vmcs_writel(GUEST_RIP, guest_entry_point);
+
 	asm(
 		/* Store host registers */
 		"push %%rdx; push %%rbp;"
@@ -512,7 +506,7 @@ void kvm_run(struct vcpu *vcpu) {
 
 		/* Enter guest mode */
 		"jne 1f \n\t"
-		__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		//__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1:\n"
     __ex(ASM_VMX_VMRESUME) "\n\t"
@@ -520,10 +514,12 @@ void kvm_run(struct vcpu *vcpu) {
     "jmp _vmexit_handler\n\t"
     ".global _guest_entry_point\n\t"
     "_guest_entry_point:\n\t"
-    "vmcall\n\t"
+    "hlt\n\t"
 		/* Save guest registers, load host registers, keep flags */
     ".global _vmexit_handler\n\t"
     "_vmexit_handler:\n\t"
+    "nop\n\t"
+    "nop\n\t"
 		"mov %0, %c[wordsize](%%rsp) \n\t"
 		"pop %0 \n\t"
 		"mov %%rax, %c[rax](%0) \n\t"
@@ -584,7 +580,7 @@ void kvm_run(struct vcpu *vcpu) {
   unsigned long host_rsp = vmcs_readl(HOST_RSP);
   unsigned long host_rip = vmcs_readl(HOST_RIP);
   unsigned long host_cr3 = vmcs_readl(HOST_CR3);
-  printf("entry %ld exit %lx error %ld rsp %lx rip %lx %lx\n", entry_error, exit_reason, error, host_rsp, host_rip, host_cr3);
+  printf("entry %ld exit %lx error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);
 }
 
 
@@ -633,9 +629,9 @@ static void vcpu_init() {
   vmcs_write32(EXCEPTION_BITMAP, 0xffffffff);
 
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
-  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
-  vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR);
-  vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR);
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING);
+  vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR | VM_EXIT_HOST_ADDR_SPACE_SIZE);
+  vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR | VM_ENTRY_IA32E_MODE);
 
   /*vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, 0x1f);
   vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, 0x0401e172);
@@ -667,6 +663,7 @@ static void vcpu_init() {
   // required to set the reserved bit
   vmcs_writel(GUEST_RFLAGS, 2);
 
+  //printf("vmexit: %lx\n", vmexit_handler);
   vmcs_writel(HOST_RIP, &vmexit_handler);
 
   initialize_16bit_host_guest_state();
@@ -705,7 +702,7 @@ static void vcpu_init() {
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   // maybe these shouldn't be on the stack?
   iCmd &= 0xFFFFFFFF;
-  printf("get ioctl %lX with pData %p\n", iCmd, pData);
+  //printf("get ioctl %lX with pData %p\n", iCmd, pData);
   /* kvm_ioctl */
   switch (iCmd) {
     case KVM_GET_API_VERSION:
@@ -732,7 +729,6 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       vcpu->vmcs = allocate_vmcs();
       vmcs_clear(vcpu->vmcs);
       vmcs_load(vcpu->vmcs);
-      vcpu_init();
       return 0;
     case KVM_SET_USER_MEMORY_REGION:
       return 0;
