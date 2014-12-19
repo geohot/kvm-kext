@@ -263,6 +263,10 @@ static void kvm_set_segment(struct vcpu *vcpu, struct kvm_segment *var, int seg)
 }
 
 void kvm_get_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
+  vcpu->arch.rflags = vmcs_readl(GUEST_RFLAGS);
+  vcpu->arch.regs[VCPU_REGS_RSP] = vmcs_readl(GUEST_RSP);
+  vcpu->arch.regs[VCPU_REGS_RIP] = vmcs_readl(GUEST_RIP);
+
   kvm_regs->rax = vcpu->arch.regs[VCPU_REGS_RAX]; kvm_regs->rcx = vcpu->arch.regs[VCPU_REGS_RCX];
   kvm_regs->rdx = vcpu->arch.regs[VCPU_REGS_RDX]; kvm_regs->rbx = vcpu->arch.regs[VCPU_REGS_RBX];
   kvm_regs->rsp = vcpu->arch.regs[VCPU_REGS_RSP]; kvm_regs->rbp = vcpu->arch.regs[VCPU_REGS_RBP];
