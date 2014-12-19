@@ -408,7 +408,7 @@ void kvm_run(struct vcpu *vcpu) {
 
 		/* Enter guest mode */
 		"jne 1f \n\t"
-		//__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1:\n"
     __ex(ASM_VMX_VMRESUME) "\n\t"
@@ -535,17 +535,26 @@ static void ept_init() {
 
 // could probably be managed by http://fxr.watson.org/fxr/source/osfmk/i386/pmap.h
 static void ept_add_page(unsigned long virtual_address, unsigned long physical_address) {
+  int pml4e_idx = (virtual_address >> 39) & 0x1FF;
   int pdpte_idx = (virtual_address >> 30) & 0x1FF;
   int pde_idx = (virtual_address >> 21) & 0x1FF;
   int pte_idx = (virtual_address >> 12) & 0x1FF;
-  unsigned long *pdpte, *pde, *pte;
+  unsigned long *pml4e, *pdpte, *pde, *pte;
 
-  pdpte = (unsigned long*)eptp[PAGE_OFFSET + pdpte_idx];
+  pml4e = (unsigned long*)eptp[PAGE_OFFSET + pdpte_idx];
+  if (pml4e == NULL) {
+    pml4e = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+    bzero(pml4e, PAGE_SIZE*2);
+    eptp[PAGE_OFFSET + pml4e_idx] = (unsigned long)pml4e;
+    eptp[pml4e_idx] = __pa(pml4e) | EPT_DEFAULTS;
+  }
+
+  pdpte = (unsigned long*)pml4e[PAGE_OFFSET + pdpte_idx];
   if (pdpte == NULL) {
     pdpte = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
     bzero(pdpte, PAGE_SIZE*2);
-    eptp[PAGE_OFFSET + pdpte_idx] = (unsigned long)pdpte;
-    eptp[pdpte_idx] = __pa(pdpte) | EPT_DEFAULTS;
+    pml4e[PAGE_OFFSET + pdpte_idx] = (unsigned long)pdpte;
+    pml4e[pdpte_idx] = __pa(pdpte) | EPT_DEFAULTS;
   }
 
   pde = (unsigned long*)pdpte[PAGE_OFFSET + pdpte_idx];
