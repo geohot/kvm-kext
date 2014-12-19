@@ -248,7 +248,10 @@ void kvm_run(struct vcpu *vcpu) {
   //vmcs_writel(GUEST_RSP, &stackk[0x20]);
   //vmcs_writel(GUEST_RIP, &guest_entry_point);
 
+  vmcs_clear(vcpu->vmcs);
   vmcs_load(vcpu->vmcs);
+  vcpu_init();
+
   init_host_values();
 
   // should restore this
@@ -393,7 +396,8 @@ void kvm_run(struct vcpu *vcpu) {
   unsigned long host_cr3 = vmcs_readl(HOST_CR3);
 
   printf("entry %ld exit %lx error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);
-  printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
+  //printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
+  printf("vmcs: %lx\n", vcpu->vmcs);
 
   vmcs_clear(vcpu->vmcs);
 
@@ -564,9 +568,6 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
   switch (iCmd) {
     case KVM_CREATE_VCPU:
       vcpu->vmcs = allocate_vmcs();
-      vmcs_clear(vcpu->vmcs);
-      vmcs_load(vcpu->vmcs);
-      vcpu_init();
       vmcs_clear(vcpu->vmcs);
       return 0;
     case KVM_SET_USER_MEMORY_REGION:
