@@ -488,7 +488,7 @@ void kvm_run(struct vcpu *vcpu) {
   unsigned long host_rip = vmcs_readl(HOST_RIP);
   unsigned long host_cr3 = vmcs_readl(HOST_CR3);
 
-  printf("entry %ld exit %lx error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);
+  printf("entry %ld exit %ld error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);
   //printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
   printf("vmcs: %lx\n", vcpu->vmcs);
 
@@ -528,11 +528,11 @@ static void vcpu_init() {
   vmcs_write32(EXCEPTION_BITMAP, 0xffffffff);
 
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
-  //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
-  //vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
+  vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
 
-  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING);
-  vmcs_write32(SECONDARY_VM_EXEC_CONTROL, 0);
+  //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING);
+  //vmcs_write32(SECONDARY_VM_EXEC_CONTROL, 0);
 
   // better not include PAT, EFER, or PERF_GLOBAL
   vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR | VM_EXIT_HOST_ADDR_SPACE_SIZE);
