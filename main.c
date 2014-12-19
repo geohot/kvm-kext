@@ -308,6 +308,10 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   //return 0;
 
   // should check this values?
+  printf("cr0 %lx %lx\n", sregs->cr0, vmcs_readl(GUEST_CR0));
+  printf("cr3 %lx %lx\n", sregs->cr3, vmcs_readl(GUEST_CR3));
+  printf("cr4 %lx %lx\n", sregs->cr4, vmcs_readl(GUEST_CR4));
+
   vmcs_writel(GUEST_CR0, sregs->cr0);
   vmcs_writel(GUEST_CR3, sregs->cr3);
   vmcs_writel(GUEST_CR4, sregs->cr4);
@@ -356,7 +360,6 @@ void kvm_run(struct vcpu *vcpu) {
     "pop %%rax\n" :"=a"(value));
   printf("rip: %lx\n", value);*/
 
-  init_guest_values_from_host();
 
   asm volatile ("cli\n\t");
   init_host_values();
@@ -481,14 +484,14 @@ void kvm_run(struct vcpu *vcpu) {
 
 
   unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
-  unsigned long exit_reason = vmcs_read32(VM_EXIT_REASON);
+  unsigned int exit_reason = vmcs_read32(VM_EXIT_REASON);
   unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
   //unsigned long intr = vmcs_read32(VM_EXIT_INTR_INFO);
   unsigned long host_rsp = vmcs_readl(HOST_RSP);
   unsigned long host_rip = vmcs_readl(HOST_RIP);
   unsigned long host_cr3 = vmcs_readl(HOST_CR3);
 
-  printf("entry %ld exit %ld error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);
+  printf("entry %ld exit %d(0x%x) error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, exit_reason, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);
   //printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
   printf("vmcs: %lx\n", vcpu->vmcs);
 
@@ -514,6 +517,13 @@ static const u32 vmx_msr_index[] = {
 	MSR_EFER, MSR_TSC_AUX, MSR_STAR,
 };*/
 
+static void ept_init() {
+  // EPT allocation
+	void *pptr = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+	bzero(pptr, PAGE_SIZE);
+  vmcs_writel(EPT_POINTER, __pa(pptr) | (0x03 << 3));
+}
+
 static void vcpu_init() {
   //int i;
 
@@ -536,8 +546,8 @@ static void vcpu_init() {
 
   // better not include PAT, EFER, or PERF_GLOBAL
   vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR | VM_EXIT_HOST_ADDR_SPACE_SIZE);
-  //vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR);
-  vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR | VM_ENTRY_IA32E_MODE);
+  vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR);
+  //vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR | VM_ENTRY_IA32E_MODE);
 
   //vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
   //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
@@ -611,12 +621,7 @@ static void vcpu_init() {
   vmcs_writel(GUEST_SYSENTER_ESP, rdmsr64(MSR_IA32_SYSENTER_ESP));
   vmcs_writel(GUEST_SYSENTER_EIP, rdmsr64(MSR_IA32_SYSENTER_EIP));
 
-  // 
-
-  // EPT allocation
-	void *pptr = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
-	bzero(pptr, PAGE_SIZE);
-  vmcs_writel(EPT_POINTER, __pa(pptr) | (0x03 << 3));
+  ept_init();
 
   // required to set the reserved bit
   //vmcs_writel(GUEST_RFLAGS, 2 | (1 << 15) | (1 << 3));
@@ -687,6 +692,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       vmcs_clear(vcpu->vmcs);
       vmcs_load(vcpu->vmcs);
       vcpu_init();
+      //init_guest_values_from_host();
       return 0;
     case KVM_SET_USER_MEMORY_REGION:
       return 0;

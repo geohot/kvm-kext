@@ -30,6 +30,9 @@ sudo kextutil /tmp/kvm.kext/
 sudo kextload -v /tmp/kvm.kext
 
 # run test
+cd tests
+gcc cpu_test.c
+cd ..
 tests/a.out
 
 # print the log
