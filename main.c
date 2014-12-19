@@ -557,7 +557,7 @@ static void ept_add_page(unsigned long virtual_address, unsigned long physical_a
   }
 
   // allocate the pd in the pdpt
-  pd = (unsigned long*)pdpt[PAGE_OFFSET + pd_idx];
+  pd = (unsigned long*)pdpt[PAGE_OFFSET + pdpt_idx];
   if (pd == NULL) {
     pd = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
     bzero(pd, PAGE_SIZE*2);
@@ -566,7 +566,7 @@ static void ept_add_page(unsigned long virtual_address, unsigned long physical_a
   }
 
   // allocate the pt in the pd
-  pt = (unsigned long*)pd[PAGE_OFFSET + pt_idx];
+  pt = (unsigned long*)pd[PAGE_OFFSET + pd_idx];
   if (pt == NULL) {
     pt = (unsigned long*)IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
     bzero(pt, PAGE_SIZE);
@@ -725,6 +725,10 @@ static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
 
   // wire in the memory
   IOReturn ret = md->prepare(kIODirectionInOut);
+
+  //printf("%llx\n", md->getLength());
+
+  //return 0;
 
   //printf("ret %d\n", ret);
 
