@@ -35,7 +35,7 @@ static inline u16 kvm_read_ldt(void) {
 }
 
 static unsigned long segment_base(u16 selector) {
-  u64 gdtb;
+  u64 gdtb = 0;
   asm("sgdt %0\n" : :"m"(gdtb));
   gdtb = gdtb>>16;
   if(((gdtb>>47)&0x1)){ gdtb |= 0xffff000000000000ull; }

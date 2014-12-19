@@ -29,7 +29,7 @@ static inline void vmwrite_error(unsigned long field, unsigned long value)
 
 static void vmcs_writel(unsigned long field, unsigned long value)
 {
-  printf("write: %lx <- %lx\n", field, value);
+  //printf("write: %lx <- %lx\n", field, value);
 	u8 error;
 
 	asm volatile (__ex(ASM_VMX_VMWRITE_RAX_RDX) "; setna %0"
@@ -53,7 +53,7 @@ static void vmcs_write64(unsigned long field, u64 value)
 	vmcs_writel(field, value);
 }
 
-static void vmcs_clear_bits(unsigned long field, u32 mask)
+/*static void vmcs_clear_bits(unsigned long field, u32 mask)
 {
 	vmcs_writel(field, vmcs_readl(field) & ~mask);
 }
@@ -61,5 +61,5 @@ static void vmcs_clear_bits(unsigned long field, u32 mask)
 static void vmcs_set_bits(unsigned long field, u32 mask)
 {
 	vmcs_writel(field, vmcs_readl(field) | mask);
-}
+}*/
 

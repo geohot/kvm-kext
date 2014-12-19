@@ -95,9 +95,11 @@ int main(int argc, char *argv[]) {
   printf("vcpu size: 0x%x\n", size);
   struct kvm_run *run = (struct kvm_run *)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, vcpu_fd, 0);*/
 
+  printf("running in two seconds\n");
+  sleep(2);
   err = kvm_ioctl(vcpu_fd, KVM_RUN, 0);
   printf("running...%d\n", err);
-  usleep(1000*100);
+  sleep(2);
 
   kvm_show_regs(vcpu_fd, 0);
   //printf("exit code %d suberror %d\n", run->exit_reason, run->internal.suberror);

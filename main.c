@@ -26,153 +26,6 @@ extern const void* guest_entry_point;
 
 static void vcpu_init();
 
-void initialize_naturalwidth_control(void){
-  vmcs_write64(CR0_GUEST_HOST_MASK, 0);
-  vmcs_write64(CR4_GUEST_HOST_MASK, 0);
-
-  vmcs_write64(CR0_READ_SHADOW, 0);
-  vmcs_write64(CR4_READ_SHADOW, 0);
-
-  vmcs_write64(CR3_TARGET_VALUE0, 0);
-  vmcs_write64(CR3_TARGET_VALUE1, 0);
-  vmcs_write64(CR3_TARGET_VALUE2, 0);
-  vmcs_write64(CR3_TARGET_VALUE3, 0);
-}
-  
-
-// copies all host selectors, 0xc00 - 0xc0c
-static void initialize_16bit_host_guest_state(void) {
-  u16 	    value;
-  asm ("movw %%es, %%ax\n" :"=a"(value));
-  vmcs_write16(HOST_ES_SELECTOR,value); 
-  vmcs_write16(GUEST_ES_SELECTOR,value); 
-
-  asm ("movw %%cs, %%ax\n" : "=a"(value));
-  vmcs_write16(HOST_CS_SELECTOR,value); 
-  vmcs_write16(GUEST_CS_SELECTOR,value); 
-
-  asm ("movw %%ss, %%ax\n" : "=a"(value));
-  vmcs_write16(HOST_SS_SELECTOR,value); 
-  vmcs_write16(GUEST_SS_SELECTOR,value); 
-
-  asm ("movw %%ds, %%ax\n" : "=a"(value));
-  vmcs_write16(HOST_DS_SELECTOR,value); 
-  vmcs_write16(GUEST_DS_SELECTOR,value); 
-
-  asm ("movw %%fs, %%ax\n" : "=a"(value));
-  vmcs_write16(HOST_FS_SELECTOR,value); 
-  vmcs_write16(GUEST_FS_SELECTOR,value); 
-
-  asm ("movw %%gs, %%ax\n" : "=a"(value));
-  vmcs_write16(HOST_GS_SELECTOR,value); 
-  vmcs_write16(GUEST_GS_SELECTOR,value); 
-
-  asm("str %%ax\n" : "=a"(value));
-  vmcs_write16(HOST_TR_SELECTOR,value); 
-  vmcs_write16(GUEST_TR_SELECTOR,value); 
-
-  asm("sldt %%ax\n" : "=a"(value));
-  vmcs_write16(GUEST_LDTR_SELECTOR,value); 
-}
-
-// host gdtr, idtr, tr, sysenter_cs
-static void initialize_32bit_host_guest_state(void) {
-   unsigned long field;
-   u32 	    value;
-   u64      gdtb = 0;
-   u64      idtb = 0;
-   u64      trbase;
-   u64      trbase_lo;
-   u64      trbase_hi;
-   u64 	    realtrbase;
-   u32      unusable_ar = 0x10000;
-   u32      usable_ar; 
-   u16      sel_value; 
-
-   vmcs_write32(GUEST_ES_LIMIT,0xFFFFFFFF); 
-   vmcs_write32(GUEST_DS_LIMIT,0xFFFFFFFF); 
-   vmcs_write32(GUEST_FS_LIMIT,0xFFFFFFFF); 
-   vmcs_write32(GUEST_GS_LIMIT,0xFFFFFFFF); 
-   vmcs_write32(GUEST_LDTR_LIMIT,0); 
-   vmcs_write32(GUEST_SS_LIMIT,0xFFFFFFFF); 
-   vmcs_write32(GUEST_CS_LIMIT,0xFFFFFFFF); 
-
-   vmcs_write32(GUEST_ES_AR_BYTES, unusable_ar);
-   vmcs_write32(GUEST_DS_AR_BYTES, unusable_ar);
-   vmcs_write32(GUEST_FS_AR_BYTES, unusable_ar);
-   vmcs_write32(GUEST_GS_AR_BYTES, unusable_ar);
-   vmcs_write32(GUEST_LDTR_AR_BYTES, unusable_ar);
-
-   asm ("movw %%cs, %%ax\n" : "=a"(sel_value));
-   asm("lar %%eax,%%eax\n" :"=a"(usable_ar) :"a"(sel_value)); 
-   usable_ar = usable_ar>>8;
-   usable_ar &= 0xf0ff; //clear bits 11:8 
-   vmcs_write32(GUEST_CS_AR_BYTES, usable_ar);
-   
-   asm ("movw %%ss, %%ax\n" : "=a"(sel_value));
-   asm("lar %%eax,%%eax\n" :"=a"(usable_ar) :"a"(sel_value)); 
-   usable_ar = usable_ar>>8;
-   usable_ar &= 0xf0ff; //clear bits 11:8 
-   vmcs_write32(GUEST_SS_AR_BYTES, usable_ar);
-
-  // other tr things
-   asm("mov $0x40, %rax\n");
-   asm("lsl %%eax, %%eax\n" :"=a"(value));
-   vmcs_write32(GUEST_TR_LIMIT,value); 
-
-   asm("str %%ax\n" : "=a"(sel_value));
-   asm("lar %%eax,%%eax\n" :"=a"(usable_ar) :"a"(sel_value)); 
-   usable_ar = usable_ar>>8;
-   vmcs_write32(GUEST_TR_AR_BYTES, usable_ar);
-
-  // gdt things
-   asm("sgdt %0\n" : :"m"(gdtb));
-   value = gdtb&0x0ffff;
-   gdtb = gdtb>>16; //base
-
-   if(((gdtb>>47)&0x1)){ gdtb |= 0xffff000000000000ull; }
-   vmcs_write32(GUEST_GDTR_LIMIT,value); 
-   vmcs_writel(GUEST_GDTR_BASE, gdtb);
-   vmcs_writel(HOST_GDTR_BASE, gdtb);
-
-  // tr things
-   trbase = gdtb + 0x40;
-   if(((trbase>>47)&0x1)){ trbase |= 0xffff000000000000ull; }
-
-   // SS segment override
-   asm("mov %0,%%rax\n" 
-       ".byte 0x36\n"
-       "movq (%%rax),%%rax\n"
-        :"=a"(trbase_lo) :"0"(trbase) 
-       );
-
-   realtrbase = ((trbase_lo>>16) & (0x0ffff)) | (((trbase_lo>>32)&0x000000ff) << 16) | (((trbase_lo>>56)&0xff) << 24);
-
-   // SS segment override for upper32 bits of base in ia32e mode
-   asm("mov %0,%%rax\n" 
-       ".byte 0x36\n"
-       "movq 8(%%rax),%%rax\n"
-        :"=a"(trbase_hi) :"0"(trbase) 
-       );
-
-   realtrbase = realtrbase | (trbase_hi<<32) ;
-   printf("realtrbase: %lx\n", realtrbase);
-   vmcs_writel(GUEST_TR_BASE, realtrbase);
-   vmcs_writel(HOST_TR_BASE, realtrbase);
-
-   asm("sidt %0\n" : :"m"(idtb));
-   value = idtb&0x0ffff;
-   idtb = idtb>>16; //base
-
-   if(((idtb>>47)&0x1)){ idtb |= 0xffff000000000000ull; }
-   vmcs_write32(GUEST_IDTR_LIMIT, value); 
-   vmcs_writel(GUEST_IDTR_BASE, idtb);
-   vmcs_writel(HOST_IDTR_BASE, idtb);
-
-   vmcs_write32(GUEST_INTERRUPTIBILITY_INFO, 0); 
-   vmcs_write32(GUEST_ACTIVITY_STATE, 0); 
-}
-
 
 #include "seg_base.h"
 
@@ -214,66 +67,9 @@ void init_host_values() {
 
   // PERF_GLOBAL_CTRL, PAT, and EFER are all disabled
 
-  vmcs_writel(HOST_RIP, &vmexit_handler);
+  vmcs_writel(HOST_RIP, (unsigned long)&vmexit_handler);
   // HOST_RSP is set in run
 }
-
-// host cr0, cr3, cr4, fs_base, gs_base, sysenter esp, eip, cs
-static void initialize_naturalwidth_host_guest_state(void) {
-  unsigned long field,field1;
-  u64 	    value;
-  int      fs_low;
-  int      gs_low;
-
-  vmcs_writel(GUEST_CR4,value); 
-
-  value = rdmsr64(0xc0000100);
-  printf("fs_base %lx\n", value);
-  vmcs_writel(HOST_FS_BASE,value); 
-  vmcs_writel(GUEST_FS_BASE,value); 
-
-  value = rdmsr64(0xc0000101);
-  printf("gs_base %lx\n", value);
-  vmcs_writel(HOST_GS_BASE,value); 
-  vmcs_writel(GUEST_GS_BASE,value);
-
-  value = rdmsr64(0x176);
-  printf("sysenter_esp %lx\n", value);
-  vmcs_writel(GUEST_SYSENTER_ESP, value);
-  vmcs_writel(HOST_IA32_SYSENTER_ESP, value);
-
-  value = rdmsr64(0x175);
-  printf("sysenter_eip %lx\n", value);
-  vmcs_writel(GUEST_SYSENTER_EIP, value);
-  vmcs_writel(HOST_IA32_SYSENTER_EIP, value);
-
-  value = rdmsr64(0x174);
-  printf("sysenter_cs %lx\n", value);
-  vmcs_write32(GUEST_SYSENTER_CS, value);
-  vmcs_write32(HOST_IA32_SYSENTER_CS, value);
-}
-
-void *io_bitmap_a_region, *io_bitmap_b_region, *msr_bitmap_phy_region, *virtual_apic_page;
-
-static void initialize_64bit_control(void) {
-  io_bitmap_a_region = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
-  io_bitmap_b_region = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
-  msr_bitmap_phy_region = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
-  virtual_apic_page = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
-
-	bzero(io_bitmap_a_region, PAGE_SIZE);
-	bzero(io_bitmap_b_region, PAGE_SIZE);
-	bzero(msr_bitmap_phy_region, PAGE_SIZE);
-	bzero(virtual_apic_page, PAGE_SIZE);
-
-  vmcs_writel(IO_BITMAP_A, __pa(io_bitmap_a_region));
-  vmcs_writel(IO_BITMAP_B, __pa(io_bitmap_b_region));
-  vmcs_writel(MSR_BITMAP, __pa(msr_bitmap_phy_region));
-  vmcs_writel(VIRTUAL_APIC_PAGE_ADDR, __pa(virtual_apic_page));
-  vmcs_writel(0x200C, 0);
-  vmcs_writel(TSC_OFFSET, 0);
-}
-
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
 //struct vcpu only_cpu;
@@ -490,7 +286,7 @@ void kvm_run(struct vcpu *vcpu) {
 
 		/* Enter guest mode */
 		"jne 1f \n\t"
-		__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		//__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1:\n"
     __ex(ASM_VMX_VMRESUME) "\n\t"
@@ -555,15 +351,17 @@ void kvm_run(struct vcpu *vcpu) {
 	      );
 
   asm volatile ("sti");
-  /*unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
+
+  unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
   unsigned long exit_reason = vmcs_read32(VM_EXIT_REASON);
   unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
-  unsigned long intr = vmcs_read32(VM_EXIT_INTR_INFO);
+  //unsigned long intr = vmcs_read32(VM_EXIT_INTR_INFO);
   unsigned long host_rsp = vmcs_readl(HOST_RSP);
   unsigned long host_rip = vmcs_readl(HOST_RIP);
   unsigned long host_cr3 = vmcs_readl(HOST_CR3);
 
-  printf("entry %ld exit %lx error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);*/
+  printf("entry %ld exit %lx error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);
+
 
   /*asm (
     "mov 0xAAAAAAAA, %%rax\n\t"
@@ -609,7 +407,7 @@ static const u32 vmx_msr_index[] = {
 };*/
 
 static void vcpu_init() {
-  int i;
+  //int i;
 
   //vmcs_writel(CR0_GUEST_HOST_MASK, ~0UL);
 
@@ -806,7 +604,7 @@ static void *g_kvm_ctl;
 kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
   int ret;
   printf("MyKext has started.\n");
-  printf("host rip is %lx\n", &vmexit_handler);
+  //printf("host rip is %lx\n", &vmexit_handler);
 
   ret = host_vmxon(FALSE);
   IOLog("host_vmxon: %d\n", ret);
