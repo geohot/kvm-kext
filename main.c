@@ -93,6 +93,31 @@ struct vcpu {
   unsigned long host_rsp;
 } __vcpu;
 
+static void vmcs_load(struct vmcs *vmcs) {
+	u64 phys_addr = __pa(vmcs);
+	u8 error;
+
+	asm volatile (__ex(ASM_VMX_VMPTRLD_RAX) "; setna %0"
+			: "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
+			: "cc", "memory");
+	if (error)
+		printf("kvm: vmptrld %p/%llx failed\n",
+		       vmcs, phys_addr);
+}
+
+
+static void vmcs_clear(struct vmcs *vmcs) {
+	u64 phys_addr = __pa(vmcs);
+	u8 error;
+
+	asm volatile (__ex(ASM_VMX_VMCLEAR_RAX) "; setna %0"
+		      : "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
+		      : "cc", "memory");
+	if (error)
+		printf("kvm: vmclear fail: %p/%llx\n",
+		       vmcs, phys_addr);
+}
+
 
 struct vcpu *vcpu = &__vcpu;
 
@@ -224,7 +249,7 @@ void kvm_run(struct vcpu *vcpu) {
   //vmcs_writel(GUEST_RSP, &stackk[0x20]);
   //vmcs_writel(GUEST_RIP, &guest_entry_point);
 
-
+  vmcs_load(vcpu->vmcs);
   init_host_values();
 
   // should restore this
@@ -287,7 +312,7 @@ void kvm_run(struct vcpu *vcpu) {
 
 		/* Enter guest mode */
 		"jne 1f \n\t"
-		//__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1:\n"
     __ex(ASM_VMX_VMRESUME) "\n\t"
@@ -384,30 +409,6 @@ void kvm_run(struct vcpu *vcpu) {
 }
 
 
-static void vmcs_load(struct vmcs *vmcs) {
-	u64 phys_addr = __pa(vmcs);
-	u8 error;
-
-	asm volatile (__ex(ASM_VMX_VMPTRLD_RAX) "; setna %0"
-			: "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
-			: "cc", "memory");
-	if (error)
-		printf("kvm: vmptrld %p/%llx failed\n",
-		       vmcs, phys_addr);
-}
-
-
-static void vmcs_clear(struct vmcs *vmcs) {
-	u64 phys_addr = __pa(vmcs);
-	u8 error;
-
-	asm volatile (__ex(ASM_VMX_VMCLEAR_RAX) "; setna %0"
-		      : "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
-		      : "cc", "memory");
-	if (error)
-		printf("kvm: vmclear fail: %p/%llx\n",
-		       vmcs, phys_addr);
-}
 
 /*#include <asm/msr-index.h>
 static const u32 vmx_msr_index[] = {
