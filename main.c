@@ -26,9 +26,7 @@ extern const void* guest_entry_point;
 
 static void vcpu_init();
 
-
 #include "seg_base.h"
-
 
 void init_host_values() {
   u16 selector;
@@ -81,6 +79,7 @@ struct vcpu_arch {
   unsigned long regs[NR_VCPU_REGS];
   unsigned long cr2;
   struct dtr gdtr, idtr;
+  unsigned long padding;
 };
 
 //#define NR_AUTOLOAD_MSRS 8
@@ -312,7 +311,7 @@ void kvm_run(struct vcpu *vcpu) {
 
 		/* Enter guest mode */
 		"jne 1f \n\t"
-		__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		//__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1:\n"
     __ex(ASM_VMX_VMRESUME) "\n\t"
@@ -395,6 +394,8 @@ void kvm_run(struct vcpu *vcpu) {
 
   printf("entry %ld exit %lx error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);
   printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
+
+  vmcs_clear(vcpu->vmcs);
 
 
   /*asm (
@@ -481,6 +482,17 @@ static void vcpu_init() {
   vmcs_write32(VM_ENTRY_INSTRUCTION_LEN, 0);
   vmcs_write32(TPR_THRESHOLD, 0);
 
+  vmcs_write64(CR0_GUEST_HOST_MASK, 0);
+  vmcs_write64(CR4_GUEST_HOST_MASK, 0);
+
+  vmcs_write64(CR0_READ_SHADOW, 0);
+  vmcs_write64(CR4_READ_SHADOW, 0);
+
+  vmcs_write64(CR3_TARGET_VALUE0, 0);
+  vmcs_write64(CR3_TARGET_VALUE1, 0);
+  vmcs_write64(CR3_TARGET_VALUE2, 0);
+  vmcs_write64(CR3_TARGET_VALUE3, 0);
+
   // EPT allocation
 	/*void *pptr = IOMallocAligned(PAGE_SIZE*8, PAGE_SIZE);
 	bzero(pptr, PAGE_SIZE);
@@ -555,6 +567,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       vmcs_clear(vcpu->vmcs);
       vmcs_load(vcpu->vmcs);
       vcpu_init();
+      vmcs_clear(vcpu->vmcs);
       return 0;
     case KVM_SET_USER_MEMORY_REGION:
       return 0;
@@ -616,7 +629,7 @@ kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
   printf("MyKext has started.\n");
   //printf("host rip is %lx\n", &vmexit_handler);
 
-  ret = host_vmxon(FALSE);
+  ret = host_vmxon(TRUE);
   IOLog("host_vmxon: %d\n", ret);
 
   if (ret != 0) {
