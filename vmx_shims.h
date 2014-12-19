@@ -41,14 +41,16 @@
 
 /* dealing with physical memory */
 #include <vm/pmap.h>
+
+extern "C" {
 typedef struct pmap *pmap_t;
 extern vm_map_t kernel_map;
 extern pmap_t kernel_pmap;
 extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
+}
 
 void *vmx_pcalloc(void) {
-	char *pptr;
-	pptr = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+	char *pptr = (char *)IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
 	if (pptr == NULL) return (NULL);
 	bzero(pptr, PAGE_SIZE);
 	return (pptr);
@@ -66,10 +68,9 @@ void vmx_pfree(void *va) {
 
 vmcs *allocate_vmcs() {
   u64 vmx_msr = rdmsr64(MSR_IA32_VMX_BASIC);
-  printf("msr %llx\n", vmx_msr);
+  //printf("msr %llx\n", vmx_msr);
 
-  vmcs *ret;
-  ret = vmx_pcalloc();
+  vmcs *ret = (vmcs *)vmx_pcalloc();
   ret->revision_id = vmx_msr & 0xFFFFFFFF;
 
   return ret;

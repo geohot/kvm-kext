@@ -9,6 +9,7 @@
 #include <errno.h>
 
 #include <IOKit/IOLib.h>
+#include <IOKit/IOMemoryDescriptor.h>
 #include <i386/vmx.h>
 
 #include <linux/kvm.h>
@@ -532,6 +533,7 @@ static void ept_init() {
 #define PAGE_OFFSET 512
 #define EPT_DEFAULTS ((1<<7) | VMX_EPT_EXECUTABLE_MASK | VMX_EPT_WRITABLE_MASK | VMX_EPT_READABLE_MASK)
 
+// could probably be managed by http://fxr.watson.org/fxr/source/osfmk/i386/pmap.h
 static void ept_add_page(unsigned long virtual_address, unsigned long physical_address) {
   int pdpte_idx = (virtual_address >> 30) & 0x1FF;
   int pde_idx = (virtual_address >> 21) & 0x1FF;
@@ -541,21 +543,21 @@ static void ept_add_page(unsigned long virtual_address, unsigned long physical_a
   pdpte = (unsigned long*)eptp[PAGE_OFFSET + pdpte_idx];
   if (pdpte == NULL) {
     pdpte = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
-    eptp[PAGE_OFFSET + pdpte_idx] = pdpte;
-    eptp[pdpte_idx] = __pa(eptp[PAGE_OFFSET + pdpte_idx]) | EPT_DEFAULTS;
+    eptp[PAGE_OFFSET + pdpte_idx] = (unsigned long)pdpte;
+    eptp[pdpte_idx] = __pa(pdpte) | EPT_DEFAULTS;
   }
 
   pde = (unsigned long*)pdpte[PAGE_OFFSET + pdpte_idx];
   if (pde == NULL) {
     pde = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
-    pdpte[PAGE_OFFSET + pde_idx] = pde;
+    pdpte[PAGE_OFFSET + pde_idx] = (unsigned long)pde;
     pdpte[pde_idx] = __pa(pde) | EPT_DEFAULTS;
   }
 
   pte = (unsigned long*)pde[PAGE_OFFSET + pde_idx];
   if (pte == NULL) {
     pte = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
-    pde[PAGE_OFFSET + pde_idx] = pte;
+    pde[PAGE_OFFSET + pde_idx] = (unsigned long)pte;
     pde[pde_idx] = __pa(pte) | EPT_DEFAULTS;
   }
 
@@ -699,19 +701,29 @@ static void vcpu_init() {
   vmcs_writel(HOST_GS_BASE, a);*/
 
 }
-static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr);
-  // check alignment
 
+#include <kern/task.h>
+
+static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
+  // check alignment
   unsigned long off;
-  for (off = 0; off < mr->memory_size; off += PAGE_SIZE) {
+  IOMemoryDescriptor *md = IOMemoryDescriptor::withAddress((void *)mr->userspace_addr, mr->memory_size, kIODirectionOutIn);
+
+  printf("md is %p\n", md);
+  /*printf("current_task is %p\n", ct);
+  printf("current_map is %d %p\n", sizeof(vm_map_t), (uintptr_t)get_task_map(ct));
+  //printf("current_pmap is %p\n", get_task_pmap(ct));
+  printf("kernel_pmap is %p\n", kernel_pmap);*/
+  /*for (off = 0; off < mr->memory_size; off += PAGE_SIZE) {
     unsigned long va = mr->userspace_addr + off;
-    addr64_t pa = ptoa_64(pmap_find_phys(kernel_pmap, va));
+    addr64_t pa = ptoa_64(pmap_find_phys(current_pmap, va));
     if (pa != 0) {
-      ept_add_page(mr->guest_phys_addr + off, pa);
+      //ept_add_page(mr->guest_phys_addr + off, pa);
     } else {
-      printf("couldn't find vpage %llx\n", pa);
+      printf("couldn't find vpage %lx\n", va);
+      return 0;
     }
-  }
+  }*/
   return 0;
 }
 
@@ -845,8 +857,10 @@ kern_return_t MyKextStop(kmod_info_t *ki, void *d) {
   return KERN_SUCCESS;
 }
 
+extern "C" {
 extern kern_return_t _start(kmod_info_t *ki, void *data);
 extern kern_return_t _stop(kmod_info_t *ki, void *data);
+}
 
 KMOD_EXPLICIT_DECL(com.geohot.virt.kvm, "1.0.0d1", _start, _stop)
 __private_extern__ kmod_start_func_t *_realmain = MyKextStart;
