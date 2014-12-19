@@ -1,6 +1,3 @@
-static inline unsigned long get_desc_base(const struct desc_struct *desc) {
-  return (unsigned)(desc->base0 | ((desc->base1) << 16) | ((desc->base2) << 24));
-}
 
 struct desc_struct {
         union {
@@ -27,9 +24,20 @@ struct ldttss_desc64 {
 } __attribute__((packed));
  
 
+static inline unsigned long get_desc_base(const struct desc_struct *desc) {
+  return (unsigned)(desc->base0 | ((desc->base1) << 16) | ((desc->base2) << 24));
+}
+
+static inline u16 kvm_read_ldt(void) {
+  u16 ldt;
+  asm("sldt %0" : "=g"(ldt));
+  return ldt;
+}
+
 static unsigned long segment_base(u16 selector) {
+  u64 gdtb;
   asm("sgdt %0\n" : :"m"(gdtb));
-  u64 gdtb = gdtb>>16;
+  gdtb = gdtb>>16;
   if(((gdtb>>47)&0x1)){ gdtb |= 0xffff000000000000ull; }
 
 	struct desc_struct *d;

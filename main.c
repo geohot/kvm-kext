@@ -205,28 +205,7 @@ void init_host_values() {
   vmcs_writel(HOST_IDTR_BASE, idtb);
 
   printf("get_tr: %X %llx\n", get_tr(), segment_base(get_tr()));
-  /*
-  // tr things
-  trbase = gdtb + 0x40;
-
-  // SS segment override
-  asm("mov %0,%%rax\n" 
-   ".byte 0x36\n"
-   "movq (%%rax),%%rax\n"
-    :"=a"(trbase_lo) :"0"(trbase) 
-   );
-
-  realtrbase = ((trbase_lo>>16) & (0x0ffff)) | (((trbase_lo>>32)&0x000000ff) << 16) | (((trbase_lo>>56)&0xff) << 24);
-
-  // SS segment override for upper32 bits of base in ia32e mode
-  asm("mov %0,%%rax\n" 
-   ".byte 0x36\n"
-   "movq 8(%%rax),%%rax\n"
-    :"=a"(trbase_hi) :"0"(trbase) 
-   );
-
-  realtrbase = realtrbase | (trbase_hi<<32);
-  vmcs_writel(HOST_TR_BASE, realtrbase);*/
+  vmcs_writel(HOST_TR_BASE, segment_base(get_tr()));
 
   vmcs_writel(HOST_IA32_SYSENTER_CS, rdmsr64(MSR_IA32_SYSENTER_CS));
   vmcs_writel(HOST_IA32_SYSENTER_ESP, rdmsr64(MSR_IA32_SYSENTER_ESP));
