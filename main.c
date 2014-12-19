@@ -629,7 +629,7 @@ kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
   printf("MyKext has started.\n");
   //printf("host rip is %lx\n", &vmexit_handler);
 
-  ret = host_vmxon(TRUE);
+  ret = host_vmxon(FALSE);
   IOLog("host_vmxon: %d\n", ret);
 
   if (ret != 0) {
@@ -651,7 +651,6 @@ kern_return_t MyKextStop(kmod_info_t *ki, void *d) {
   printf("MyKext has stopped.\n");
 
   //hardware_disable();
-
 
   devfs_remove(g_kvm_ctl);
   cdevsw_remove(g_kvm_major, &kvm_functions);
