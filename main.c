@@ -541,7 +541,7 @@ static void ept_add_page(unsigned long virtual_address, unsigned long physical_a
   int pd_idx = (virtual_address >> 21) & 0x1FF;
   int pt_idx = (virtual_address >> 12) & 0x1FF;
   unsigned long *pdpt, *pd, *pt;
-  //printf("%d %d %d %d\n", pml4e_idx, pdpte_idx, pde_idx, pte_idx);
+  //printf("%d %d %d %d\n", pml4_idx, pdpt_idx, pd_idx, pt_idx);
 
   // allocate the pdpt in the pml4 if NULL
   pdpt = (unsigned long*)pml4[PAGE_OFFSET + pml4_idx];

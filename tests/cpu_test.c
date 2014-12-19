@@ -73,13 +73,21 @@ int main(int argc, char *argv[]) {
   // nops
   memset(guest_ram, 0x90, RAM_SIZE);
   guest_ram[ENTRY_POINT + 0x10] = 0x40;  // inc eax
+  guest_ram[ENTRY_POINT + 0x11] = 0xf4;  // inc eax
 
-  struct kvm_userspace_memory_region low_memory = {
+  /*struct kvm_userspace_memory_region low_memory = {
     .slot = 3,
     .flags = 0,
     .memory_size = RAM_SIZE,
     .guest_phys_addr = 0,
     .userspace_addr = (__u64)guest_ram,
+  };*/
+  struct kvm_userspace_memory_region low_memory = {
+    .slot = 3,
+    .flags = 0,
+    .memory_size = 0x1000,
+    .guest_phys_addr = ENTRY_POINT,
+    .userspace_addr = (__u64)(guest_ram + ENTRY_POINT),
   };
   err = kvm_ioctl(vm_fd, KVM_SET_USER_MEMORY_REGION, &low_memory);
   printf("memory set up: %d\n", err);
