@@ -170,6 +170,66 @@ static void initialize_32bit_host_guest_state(void) {
    vmcs_write32(GUEST_ACTIVITY_STATE, 0); 
 }
 
+void init_host_values() {
+  u64 value;
+  u16 selector;
+  u64 gdtb, idtb, trbase, realtrbase, trbase_hi, trbase_lo;
+
+  vmcs_writel(HOST_CR0, get_cr0()); 
+  vmcs_writel(HOST_CR3, get_cr3_raw()); 
+  vmcs_writel(HOST_CR4, get_cr4());
+
+  asm ("movw %%cs, %%ax\n" : "=a"(selector));
+  vmcs_write16(HOST_CS_SELECTOR, selector);
+  vmcs_write16(HOST_SS_SELECTOR, get_ss());
+  vmcs_write16(HOST_DS_SELECTOR, get_ds());
+  vmcs_write16(HOST_ES_SELECTOR, get_es());
+  vmcs_write16(HOST_FS_SELECTOR, get_fs());
+  vmcs_write16(HOST_GS_SELECTOR, get_gs());
+  vmcs_write16(HOST_TR_SELECTOR, get_tr()); 
+
+  vmcs_writel(HOST_FS_BASE, rdmsr64(MSR_IA32_FS_BASE)); 
+  vmcs_writel(HOST_GS_BASE, rdmsr64(MSR_IA32_GS_BASE));  // KERNEL_GS_BASE or GS_BASE?
+
+  // HOST_TR_BASE?
+
+  asm("sgdt %0\n" : :"m"(gdtb));
+  gdtb = gdtb>>16; if(((gdtb>>47)&0x1)){ gdtb |= 0xffff000000000000ull; }
+  vmcs_writel(HOST_GDTR_BASE, gdtb);
+
+  asm("sidt %0\n" : :"m"(idtb));
+  idtb = idtb>>16; if(((idtb>>47)&0x1)){ idtb |= 0xffff000000000000ull; }
+  vmcs_writel(HOST_IDTR_BASE, idtb);
+
+  // tr things
+  trbase = gdtb + 0x40;
+  if(((trbase>>47)&0x1)){ trbase |= 0xffff000000000000ull; }
+
+  // SS segment override
+  asm("mov %0,%%rax\n" 
+   ".byte 0x36\n"
+   "movq (%%rax),%%rax\n"
+    :"=a"(trbase_lo) :"0"(trbase) 
+   );
+
+  realtrbase = ((trbase_lo>>16) & (0x0ffff)) | (((trbase_lo>>32)&0x000000ff) << 16) | (((trbase_lo>>56)&0xff) << 24);
+
+  // SS segment override for upper32 bits of base in ia32e mode
+  asm("mov %0,%%rax\n" 
+   ".byte 0x36\n"
+   "movq 8(%%rax),%%rax\n"
+    :"=a"(trbase_hi) :"0"(trbase) 
+   );
+
+  realtrbase = realtrbase | (trbase_hi<<32);
+  vmcs_writel(HOST_TR_BASE, realtrbase);
+
+  vmcs_writel(HOST_IA32_SYSENTER_CS, rdmsr64(MSR_IA32_SYSENTER_CS));
+  vmcs_writel(HOST_IA32_SYSENTER_ESP, rdmsr64(MSR_IA32_SYSENTER_ESP));
+  vmcs_writel(HOST_IA32_SYSENTER_EIP, rdmsr64(MSR_IA32_SYSENTER_EIP));
+
+  // PERF_GLOBAL_CTRL, PAT, and EFER are all disabled
+}
 
 // host cr0, cr3, cr4, fs_base, gs_base, sysenter esp, eip, cs
 static void initialize_naturalwidth_host_guest_state(void) {
@@ -178,17 +238,6 @@ static void initialize_naturalwidth_host_guest_state(void) {
   int      fs_low;
   int      gs_low;
 
-  asm ("movq %%cr0, %%rax\n" :"=a"(value));
-  vmcs_writel(HOST_CR0, value); 
-  vmcs_writel(GUEST_CR0, value); 
-
-  asm ("movq %%cr3, %%rax\n" :"=a"(value));
-  printf("cr3 is %lx\n", value);
-  vmcs_writel(HOST_CR3, value); 
-  vmcs_writel(GUEST_CR3, value); 
-
-  asm ("movq %%cr4, %%rax\n" :"=a"(value));
-  vmcs_writel(HOST_CR4,value); 
   vmcs_writel(GUEST_CR4,value); 
 
   value = rdmsr64(0xc0000100);
@@ -400,6 +449,9 @@ unsigned long stackk[0x40];
 void kvm_run(struct vcpu *vcpu) {
   vmcs_writel(GUEST_RSP, &stackk[0x20]);
   vmcs_writel(GUEST_RIP, &guest_entry_point);
+
+  init_host_values();
+  vmcs_writel(HOST_RIP, &vmexit_handler);
 
   //vmcs_writel(GUEST_RSP, vcpu->arch.regs[VCPU_REGS_RSP]);
   //vmcs_writel(GUEST_RIP, vcpu->arch.regs[VCPU_REGS_RIP]);
@@ -626,17 +678,15 @@ static void vcpu_init() {
 
   // required to set the reserved bit
   //vmcs_writel(GUEST_RFLAGS, 2 | (1 << 15) | (1 << 3));
-  vmcs_writel(GUEST_RFLAGS, 2);
 
   //printf("vmexit: %lx\n", vmexit_handler);
-  vmcs_writel(HOST_RIP, &vmexit_handler);
 
-  initialize_16bit_host_guest_state();
+  /*initialize_16bit_host_guest_state();
   initialize_64bit_control();
   // initialize_64bit_host_guest_state
   initialize_naturalwidth_control();
   initialize_32bit_host_guest_state();
-  initialize_naturalwidth_host_guest_state();
+  initialize_naturalwidth_host_guest_state();*/
 
 
   /*vmcs_write64(VM_EXIT_MSR_LOAD_ADDR, __pa(vcpu->msr_autoload.host));
