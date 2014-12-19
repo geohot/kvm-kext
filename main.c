@@ -21,6 +21,9 @@
 #define __ex(x) x
 #define __pa vmx_paddr
 
+extern const void* vmexit_handler;
+extern const void* guest_entry_point;
+
 static void vcpu_init();
 
 void initialize_naturalwidth_control(void){
@@ -174,9 +177,8 @@ static void initialize_32bit_host_guest_state(void) {
 #include "seg_base.h"
 
 void init_host_values() {
-  u64 value;
   u16 selector;
-  u64 gdtb, idtb, trbase, realtrbase, trbase_hi, trbase_lo;
+  u64 gdtb = 0, idtb = 0;
 
   vmcs_writel(HOST_CR0, get_cr0()); 
   vmcs_writel(HOST_CR3, get_cr3_raw()); 
@@ -195,6 +197,8 @@ void init_host_values() {
   vmcs_writel(HOST_GS_BASE, rdmsr64(MSR_IA32_GS_BASE));  // KERNEL_GS_BASE or GS_BASE?
 
   // HOST_TR_BASE?
+  //printf("get_tr: %X %llx\n", get_tr(), segment_base(get_tr()));
+  vmcs_writel(HOST_TR_BASE, segment_base(get_tr()));
 
   asm("sgdt %0\n" : :"m"(gdtb));
   gdtb = gdtb>>16; if(((gdtb>>47)&0x1)){ gdtb |= 0xffff000000000000ull; }
@@ -204,14 +208,14 @@ void init_host_values() {
   idtb = idtb>>16; if(((idtb>>47)&0x1)){ idtb |= 0xffff000000000000ull; }
   vmcs_writel(HOST_IDTR_BASE, idtb);
 
-  printf("get_tr: %X %llx\n", get_tr(), segment_base(get_tr()));
-  vmcs_writel(HOST_TR_BASE, segment_base(get_tr()));
-
   vmcs_writel(HOST_IA32_SYSENTER_CS, rdmsr64(MSR_IA32_SYSENTER_CS));
   vmcs_writel(HOST_IA32_SYSENTER_ESP, rdmsr64(MSR_IA32_SYSENTER_ESP));
   vmcs_writel(HOST_IA32_SYSENTER_EIP, rdmsr64(MSR_IA32_SYSENTER_EIP));
 
   // PERF_GLOBAL_CTRL, PAT, and EFER are all disabled
+
+  vmcs_writel(HOST_RIP, &vmexit_handler);
+  // HOST_RSP is set in run
 }
 
 // host cr0, cr3, cr4, fs_base, gs_base, sysenter esp, eip, cs
@@ -424,17 +428,19 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
 	return 0;
 }
 
-extern const void* vmexit_handler;
-extern const void* guest_entry_point;
-
 unsigned long stackk[0x40];
 
 void kvm_run(struct vcpu *vcpu) {
-  vmcs_writel(GUEST_RSP, &stackk[0x20]);
-  vmcs_writel(GUEST_RIP, &guest_entry_point);
+  //vmcs_writel(GUEST_RSP, &stackk[0x20]);
+  //vmcs_writel(GUEST_RIP, &guest_entry_point);
+
+  asm volatile ("cli");
 
   init_host_values();
-  vmcs_writel(HOST_RIP, &vmexit_handler);
+
+  // should restore this
+  //unsigned long debugctlmsr = rdmsr64(MSR_IA32_DEBUGCTLMSR);
+  //printf("debugctl: %x\n", debugctlmsr);
 
   //vmcs_writel(GUEST_RSP, vcpu->arch.regs[VCPU_REGS_RSP]);
   //vmcs_writel(GUEST_RIP, vcpu->arch.regs[VCPU_REGS_RIP]);
@@ -484,7 +490,7 @@ void kvm_run(struct vcpu *vcpu) {
 
 		/* Enter guest mode */
 		"jne 1f \n\t"
-		//__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1:\n"
     __ex(ASM_VMX_VMRESUME) "\n\t"
@@ -520,10 +526,7 @@ void kvm_run(struct vcpu *vcpu) {
 		"mov %%rax, %c[cr2](%0) \n\t"
 
 		"pop  %%rbp\n\t pop  %%rdx \n\t"
-		"setbe %c[fail](%0) \n\t"
-
-    // fix?
-    "sti \n\t"
+		//"setbe %c[fail](%0) \n\t"
 
 	      : : "c"(vcpu), "d"((unsigned long)HOST_RSP),
 		[launched]"i"(offsetof(struct vcpu, __launched)),
@@ -551,10 +554,26 @@ void kvm_run(struct vcpu *vcpu) {
 		, "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
 	      );
 
+  asm volatile ("sti");
+  /*unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
+  unsigned long exit_reason = vmcs_read32(VM_EXIT_REASON);
+  unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
+  unsigned long intr = vmcs_read32(VM_EXIT_INTR_INFO);
+  unsigned long host_rsp = vmcs_readl(HOST_RSP);
+  unsigned long host_rip = vmcs_readl(HOST_RIP);
+  unsigned long host_cr3 = vmcs_readl(HOST_CR3);
+
+  printf("entry %ld exit %lx error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);*/
+
+  /*asm (
+    "mov 0xAAAAAAAA, %%rax\n\t"
+    "mov 0(%%rax), %%rax\n\t"
+    : : "c"(entry_error), "d"(exit_reason), "b"(intr)
+  );*/
+
   // crash controlled
-  /*unsigned long *a = 0xAAAAAAAA;
-  printf("%d\n", *a);*/
   //vcpu->__launched = 1;
+  //printf("tmp %lx\n", rdmsr64(MSR_IA32_EFER));
 }
 
 
@@ -756,13 +775,6 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       return 0;
     case KVM_RUN:
       kvm_run(vcpu);
-      unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
-      unsigned long exit_reason = vmcs_read32(VM_EXIT_REASON);
-      unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
-      unsigned long host_rsp = vmcs_readl(HOST_RSP);
-      unsigned long host_rip = vmcs_readl(HOST_RIP);
-      unsigned long host_cr3 = vmcs_readl(HOST_CR3);
-      printf("entry %ld exit %lx error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);
       return 0;
     default:
       break;

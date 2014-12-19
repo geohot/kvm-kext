@@ -29,7 +29,7 @@ static inline void vmwrite_error(unsigned long field, unsigned long value)
 
 static void vmcs_writel(unsigned long field, unsigned long value)
 {
-  //printf("write: %lx <- %lx\n", field, value);
+  printf("write: %lx <- %lx\n", field, value);
 	u8 error;
 
 	asm volatile (__ex(ASM_VMX_VMWRITE_RAX_RDX) "; setna %0"
