@@ -408,7 +408,7 @@ void kvm_run(struct vcpu *vcpu) {
 
 		/* Enter guest mode */
 		"jne 1f \n\t"
-		__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		//__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1:\n"
     __ex(ASM_VMX_VMRESUME) "\n\t"
@@ -531,7 +531,7 @@ static void ept_init() {
 
 
 #define PAGE_OFFSET 512
-#define EPT_DEFAULTS ((1<<7) | VMX_EPT_EXECUTABLE_MASK | VMX_EPT_WRITABLE_MASK | VMX_EPT_READABLE_MASK)
+#define EPT_DEFAULTS (VMX_EPT_EXECUTABLE_MASK | VMX_EPT_WRITABLE_MASK | VMX_EPT_READABLE_MASK)
 
 // could probably be managed by http://fxr.watson.org/fxr/source/osfmk/i386/pmap.h
 static void ept_add_page(unsigned long virtual_address, unsigned long physical_address) {
@@ -543,6 +543,7 @@ static void ept_add_page(unsigned long virtual_address, unsigned long physical_a
   pdpte = (unsigned long*)eptp[PAGE_OFFSET + pdpte_idx];
   if (pdpte == NULL) {
     pdpte = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+    bzero(pdpte, PAGE_SIZE*2);
     eptp[PAGE_OFFSET + pdpte_idx] = (unsigned long)pdpte;
     eptp[pdpte_idx] = __pa(pdpte) | EPT_DEFAULTS;
   }
@@ -550,13 +551,15 @@ static void ept_add_page(unsigned long virtual_address, unsigned long physical_a
   pde = (unsigned long*)pdpte[PAGE_OFFSET + pdpte_idx];
   if (pde == NULL) {
     pde = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+    bzero(pde, PAGE_SIZE*2);
     pdpte[PAGE_OFFSET + pde_idx] = (unsigned long)pde;
     pdpte[pde_idx] = __pa(pde) | EPT_DEFAULTS;
   }
 
   pte = (unsigned long*)pde[PAGE_OFFSET + pde_idx];
   if (pte == NULL) {
-    pte = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+    pte = (unsigned long*)IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+    bzero(pte, PAGE_SIZE);
     pde[PAGE_OFFSET + pde_idx] = (unsigned long)pte;
     pde[pde_idx] = __pa(pte) | EPT_DEFAULTS;
   }
@@ -707,29 +710,34 @@ static void vcpu_init() {
 static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
   // check alignment
   unsigned long off;
-  IOMemoryDescriptor *md = IOMemoryDescriptor::withAddressRange(mr->userspace_addr, mr->memory_size, kIODirectionOutIn, current_task());
+  IOMemoryDescriptor *md = IOMemoryDescriptor::withAddressRange(mr->userspace_addr, mr->memory_size, kIODirectionInOut, current_task());
 
+  // wire in the memory
+  IOReturn ret = md->prepare(kIODirectionInOut);
+
+  //printf("ret %d\n", ret);
+
+  //printf("md is %p %lx\n", md, pa);
   //IOByteCount tmp;
-  addr64_t pa = md->getPhysicalSegment(0, &tmp, kIOMemoryMapperNone);
   /*IOByteCount rpc, dpc;
   md->getPageCounts(&rpc, &dpc);
   printf("0x%x 0x%x\n", rpc, dpc);*/
 
-  printf("md is %p %lx\n", md, md->getLength(), pa);
   /*printf("current_task is %p\n", ct);
   printf("current_map is %d %p\n", sizeof(vm_map_t), (uintptr_t)get_task_map(ct));
   //printf("current_pmap is %p\n", get_task_pmap(ct));
   printf("kernel_pmap is %p\n", kernel_pmap);*/
-  /*for (off = 0; off < mr->memory_size; off += PAGE_SIZE) {
+
+  for (off = 0; off < mr->memory_size; off += PAGE_SIZE) {
     unsigned long va = mr->userspace_addr + off;
-    addr64_t pa = ptoa_64(pmap_find_phys(current_pmap, va));
+    addr64_t pa = md->getPhysicalSegment(off, NULL, kIOMemoryMapperNone);
     if (pa != 0) {
-      //ept_add_page(mr->guest_phys_addr + off, pa);
+      ept_add_page(mr->guest_phys_addr + off, pa);
     } else {
       printf("couldn't find vpage %lx\n", va);
       return 0;
     }
-  }*/
+  }
   return 0;
 }
 
