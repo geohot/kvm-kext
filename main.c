@@ -170,6 +170,9 @@ static void initialize_32bit_host_guest_state(void) {
    vmcs_write32(GUEST_ACTIVITY_STATE, 0); 
 }
 
+
+#include "seg_base.h"
+
 void init_host_values() {
   u64 value;
   u16 selector;
@@ -201,9 +204,10 @@ void init_host_values() {
   idtb = idtb>>16; if(((idtb>>47)&0x1)){ idtb |= 0xffff000000000000ull; }
   vmcs_writel(HOST_IDTR_BASE, idtb);
 
+  printf("get_tr: %X %llx\n", get_tr(), segment_base(get_tr()));
+  /*
   // tr things
   trbase = gdtb + 0x40;
-  if(((trbase>>47)&0x1)){ trbase |= 0xffff000000000000ull; }
 
   // SS segment override
   asm("mov %0,%%rax\n" 
@@ -222,7 +226,7 @@ void init_host_values() {
    );
 
   realtrbase = realtrbase | (trbase_hi<<32);
-  vmcs_writel(HOST_TR_BASE, realtrbase);
+  vmcs_writel(HOST_TR_BASE, realtrbase);*/
 
   vmcs_writel(HOST_IA32_SYSENTER_CS, rdmsr64(MSR_IA32_SYSENTER_CS));
   vmcs_writel(HOST_IA32_SYSENTER_ESP, rdmsr64(MSR_IA32_SYSENTER_ESP));
@@ -501,7 +505,7 @@ void kvm_run(struct vcpu *vcpu) {
 
 		/* Enter guest mode */
 		"jne 1f \n\t"
-		__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		//__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1:\n"
     __ex(ASM_VMX_VMRESUME) "\n\t"
