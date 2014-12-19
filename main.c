@@ -271,7 +271,7 @@ void kvm_run(struct vcpu *vcpu) {
   vmcs_clear(vcpu->vmcs);
   vmcs_load(vcpu->vmcs);
   vcpu_init();
-  //initialize_64bit_control();
+  initialize_64bit_control();
 
   // should restore this
   //unsigned long debugctlmsr = rdmsr64(MSR_IA32_DEBUGCTLMSR);
@@ -289,11 +289,10 @@ void kvm_run(struct vcpu *vcpu) {
     "pop %%rax\n" :"=a"(value));
   printf("rip: %lx\n", value);*/
 
+  asm volatile ("cli\n\t");
   init_host_values();
 
 	asm(
-    "pushf\n\t"
-    "cli\n\t"
     //"call _init_host_values\n\t"
 
 		/* Store host registers */
@@ -335,7 +334,7 @@ void kvm_run(struct vcpu *vcpu) {
 
 		/* Enter guest mode */
 		"jne 1f \n\t"
-		//__ex(ASM_VMX_VMLAUNCH) "\n\t"
+		__ex(ASM_VMX_VMLAUNCH) "\n\t"
 		"jmp 2f \n\t"
 		"1:\n"
     __ex(ASM_VMX_VMRESUME) "\n\t"
@@ -377,7 +376,7 @@ void kvm_run(struct vcpu *vcpu) {
     "lidt %c[idtr](%0)\n\t"
     "lgdt %c[gdtr](%0)\n\t"
 
-    "popf\n\t"
+    "sti\n\t"
 
 	      : : "c"(vcpu), "d"((unsigned long)HOST_RSP),
 		[launched]"i"(offsetof(struct vcpu, __launched)),
