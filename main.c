@@ -707,9 +707,15 @@ static void vcpu_init() {
 static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
   // check alignment
   unsigned long off;
-  IOMemoryDescriptor *md = IOMemoryDescriptor::withAddress((void *)mr->userspace_addr, mr->memory_size, kIODirectionOutIn);
+  IOMemoryDescriptor *md = IOMemoryDescriptor::withAddressRange(mr->userspace_addr, mr->memory_size, kIODirectionOutIn, current_task());
 
-  printf("md is %p\n", md);
+  //IOByteCount tmp;
+  addr64_t pa = md->getPhysicalSegment(0, &tmp, kIOMemoryMapperNone);
+  /*IOByteCount rpc, dpc;
+  md->getPageCounts(&rpc, &dpc);
+  printf("0x%x 0x%x\n", rpc, dpc);*/
+
+  printf("md is %p %lx\n", md, md->getLength(), pa);
   /*printf("current_task is %p\n", ct);
   printf("current_map is %d %p\n", sizeof(vm_map_t), (uintptr_t)get_task_map(ct));
   //printf("current_pmap is %p\n", get_task_pmap(ct));
