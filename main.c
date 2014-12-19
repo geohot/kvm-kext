@@ -28,6 +28,26 @@ static void vcpu_init();
 
 #include "seg_base.h"
 
+void *io_bitmap_a_region, *io_bitmap_b_region, *msr_bitmap_phy_region, *virtual_apic_page;
+static void initialize_64bit_control(void) {
+  io_bitmap_a_region = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+  io_bitmap_b_region = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+  msr_bitmap_phy_region = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+  virtual_apic_page = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+
+	bzero(io_bitmap_a_region, PAGE_SIZE);
+	bzero(io_bitmap_b_region, PAGE_SIZE);
+	bzero(msr_bitmap_phy_region, PAGE_SIZE);
+	bzero(virtual_apic_page, PAGE_SIZE);
+
+  vmcs_writel(IO_BITMAP_A, __pa(io_bitmap_a_region));
+  vmcs_writel(IO_BITMAP_B, __pa(io_bitmap_b_region));
+  vmcs_writel(MSR_BITMAP, __pa(msr_bitmap_phy_region));
+  vmcs_writel(VIRTUAL_APIC_PAGE_ADDR, __pa(virtual_apic_page));
+  vmcs_writel(0x200C, 0);
+  vmcs_writel(TSC_OFFSET, 0);
+}
+
 void init_host_values() {
   u16 selector;
   struct dtr gdtb, idtb;
@@ -251,8 +271,7 @@ void kvm_run(struct vcpu *vcpu) {
   vmcs_clear(vcpu->vmcs);
   vmcs_load(vcpu->vmcs);
   vcpu_init();
-
-  init_host_values();
+  //initialize_64bit_control();
 
   // should restore this
   //unsigned long debugctlmsr = rdmsr64(MSR_IA32_DEBUGCTLMSR);
@@ -270,10 +289,12 @@ void kvm_run(struct vcpu *vcpu) {
     "pop %%rax\n" :"=a"(value));
   printf("rip: %lx\n", value);*/
 
+  init_host_values();
+
 	asm(
     "pushf\n\t"
     "cli\n\t"
-    
+    //"call _init_host_values\n\t"
 
 		/* Store host registers */
 		"push %%rdx\n\tpush %%rbp\n\t"

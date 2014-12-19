@@ -48,9 +48,9 @@ extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
 
 void *vmx_pcalloc(void) {
 	char *pptr;
-	pptr = IOMallocAligned(PAGE_SIZE*0x10, PAGE_SIZE);
+	pptr = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
 	if (pptr == NULL) return (NULL);
-	bzero(pptr, PAGE_SIZE*0x10);
+	bzero(pptr, PAGE_SIZE);
 	return (pptr);
 }
 
