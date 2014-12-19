@@ -98,8 +98,8 @@ void init_host_values() {
 struct vcpu_arch {
   unsigned long regs[NR_VCPU_REGS];
   unsigned long cr2;
-  struct dtr gdtr, idtr;
-  unsigned long padding;
+  struct dtr host_gdtr, host_idtr;
+  unsigned short int host_ldtr;
 };
 
 //#define NR_AUTOLOAD_MSRS 8
@@ -257,7 +257,7 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   vmcs_write32(GUEST_GDTR_LIMIT, sregs->gdt.limit);
   vmcs_writel(GUEST_GDTR_BASE, sregs->gdt.base);
 
-  vmcs_writel(GUEST_IA32_EFER, sregs->efer);
+  //vmcs_writel(GUEST_IA32_EFER, sregs->efer);
 
 	return 0;
 }
@@ -271,7 +271,7 @@ void kvm_run(struct vcpu *vcpu) {
   vmcs_clear(vcpu->vmcs);
   vmcs_load(vcpu->vmcs);
   vcpu_init();
-  initialize_64bit_control();
+  //initialize_64bit_control();
 
   // should restore this
   //unsigned long debugctlmsr = rdmsr64(MSR_IA32_DEBUGCTLMSR);
@@ -302,6 +302,7 @@ void kvm_run(struct vcpu *vcpu) {
 
     "sgdt %c[gdtr](%0)\n\t"
     "sidt %c[idtr](%0)\n\t"
+    "sldt %c[ldtr](%0)\n\t"
 
 		"mov %%rsp, %c[host_rsp](%0) \n\t"
 		__ex(ASM_VMX_VMWRITE_RSP_RDX) "\n\t"
@@ -370,9 +371,10 @@ void kvm_run(struct vcpu *vcpu) {
 		"mov %%rax, %c[cr2](%0) \n\t"
 
 		"pop  %%rbp\n\t pop  %%rdx \n\t"
-		//"setbe %c[fail](%0) \n\t"
+		"setbe %c[fail](%0) \n\t"
     /* my turn */
 
+    "lldt %c[ldtr](%0)\n\t"
     "lidt %c[idtr](%0)\n\t"
     "lgdt %c[gdtr](%0)\n\t"
 
@@ -398,11 +400,13 @@ void kvm_run(struct vcpu *vcpu) {
 		[r14]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_R14])),
 		[r15]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_R15])),
 		[cr2]"i"(offsetof(struct vcpu, arch.cr2)),
-		[idtr]"i"(offsetof(struct vcpu, arch.idtr)),
-		[gdtr]"i"(offsetof(struct vcpu, arch.gdtr)),
+		[idtr]"i"(offsetof(struct vcpu, arch.host_idtr)),
+		[gdtr]"i"(offsetof(struct vcpu, arch.host_gdtr)),
+    [ldtr]"i"(offsetof(struct vcpu, arch.host_ldtr)),
 		[wordsize]"i"(sizeof(ulong))
 	      : "cc", "memory"
 		, "rax", "rbx", "rdi", "rsi"
+    // "rsp", "rbp", "rcx", "rdx"
 		, "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
 	      );
 
@@ -501,6 +505,15 @@ static void vcpu_init() {
   // VMCS shadowing isn't set, from 24.4
   vmcs_write64(VMCS_LINK_POINTER, ~0LL);
   vmcs_write64(GUEST_IA32_DEBUGCTL, 0);
+
+  vmcs_write64(VM_EXIT_MSR_STORE_ADDR, ~0LL);
+  vmcs_write64(VM_EXIT_MSR_LOAD_ADDR, ~0LL);
+  vmcs_write64(VM_ENTRY_MSR_LOAD_ADDR, ~0LL);
+  vmcs_write64(VIRTUAL_APIC_PAGE_ADDR, ~0LL);
+  vmcs_write64(APIC_ACCESS_ADDR, ~0LL);
+  //vmcs_write64(POSTED_INTR_DESC_ADDR, 0);
+  vmcs_write64(EPT_POINTER, ~0LL);
+
 
   vmcs_write32(VM_ENTRY_EXCEPTION_ERROR_CODE, 0);
   vmcs_write32(VM_ENTRY_INSTRUCTION_LEN, 0);
@@ -606,7 +619,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       return 0;
     case KVM_SET_REGS:
       if (pData == NULL) return EINVAL;
-      //kvm_set_regs(vcpu, (struct kvm_regs *)pData);
+      kvm_set_regs(vcpu, (struct kvm_regs *)pData);
       return 0;
     case KVM_GET_SREGS:
       //kvm_get_sregs((user_addr_t)pData);
