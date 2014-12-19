@@ -457,7 +457,6 @@ void kvm_run(struct vcpu *vcpu) {
     "jmp _vmexit_handler\n\t"
     ".global _guest_entry_point\n\t"
     "_guest_entry_point:\n\t"
-    "vmcall\n\t"
     "hlt\n\t"
 		/* Save guest registers, load host registers, keep flags */
     "nop\n\t"
@@ -568,8 +567,10 @@ static void vcpu_init() {
   //vmcs_writel(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
   vmcs_write32(EXCEPTION_BITMAP, 0xffffffff);
 
-  vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_EXT_INTR_MASK | PIN_BASED_NMI_EXITING);
+  vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
   vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING);
+
+  // better not include PAT, EFER, or PERF_GLOBAL
   vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR | VM_EXIT_HOST_ADDR_SPACE_SIZE);
   vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR | VM_ENTRY_IA32E_MODE);
 
