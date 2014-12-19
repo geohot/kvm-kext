@@ -485,13 +485,14 @@ void kvm_run(struct vcpu *vcpu) {
 
   unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
   unsigned int exit_reason = vmcs_read32(VM_EXIT_REASON);
+  unsigned int qual = vmcs_read32(EXIT_QUALIFICATION);
   unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
   //unsigned long intr = vmcs_read32(VM_EXIT_INTR_INFO);
   unsigned long host_rsp = vmcs_readl(HOST_RSP);
   unsigned long host_rip = vmcs_readl(HOST_RIP);
   unsigned long host_cr3 = vmcs_readl(HOST_CR3);
 
-  printf("entry %ld exit %d(0x%x) error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, exit_reason, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);
+  printf("entry %ld exit %d(0x%x) qual %X error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, exit_reason, qual, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);
   //printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
   printf("vmcs: %lx\n", vcpu->vmcs);
 
@@ -517,11 +518,48 @@ static const u32 vmx_msr_index[] = {
 	MSR_EFER, MSR_TSC_AUX, MSR_STAR,
 };*/
 
+
+// store the physical addresses on the first page, and the virtual addresses on the second page
+unsigned long *eptp = NULL;
+
 static void ept_init() {
   // EPT allocation
-	void *pptr = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
-	bzero(pptr, PAGE_SIZE);
-  vmcs_writel(EPT_POINTER, __pa(pptr) | (0x03 << 3));
+	eptp = (unsigned long *)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+	bzero(eptp, PAGE_SIZE*2);
+}
+
+
+#define PAGE_OFFSET 512
+#define EPT_DEFAULTS ((1<<7) | VMX_EPT_EXECUTABLE_MASK | VMX_EPT_WRITABLE_MASK | VMX_EPT_READABLE_MASK)
+
+static void ept_add_page(unsigned long virtual_address, unsigned long physical_address) {
+  int pdpte_idx = (virtual_address >> 30) & 0x1FF;
+  int pde_idx = (virtual_address >> 21) & 0x1FF;
+  int pte_idx = (virtual_address >> 12) & 0x1FF;
+  unsigned long *pdpte, *pde, *pte;
+
+  pdpte = (unsigned long*)eptp[PAGE_OFFSET + pdpte_idx];
+  if (pdpte == NULL) {
+    pdpte = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+    eptp[PAGE_OFFSET + pdpte_idx] = pdpte;
+    eptp[pdpte_idx] = __pa(eptp[PAGE_OFFSET + pdpte_idx]) | EPT_DEFAULTS;
+  }
+
+  pde = (unsigned long*)pdpte[PAGE_OFFSET + pdpte_idx];
+  if (pde == NULL) {
+    pde = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+    pdpte[PAGE_OFFSET + pde_idx] = pde;
+    pdpte[pde_idx] = __pa(pde) | EPT_DEFAULTS;
+  }
+
+  pte = (unsigned long*)pde[PAGE_OFFSET + pde_idx];
+  if (pte == NULL) {
+    pte = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+    pde[PAGE_OFFSET + pde_idx] = pte;
+    pde[pde_idx] = __pa(pte) | EPT_DEFAULTS;
+  }
+
+  pte[pte_idx] = physical_address | EPT_DEFAULTS;
 }
 
 static void vcpu_init() {
@@ -536,6 +574,8 @@ static void vcpu_init() {
   //vmcs_writel(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_HLT_EXITING | CPU_BASED_CR3_LOAD_EXITING | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
   //vmcs_writel(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
   vmcs_write32(EXCEPTION_BITMAP, 0xffffffff);
+
+  vmcs_writel(EPT_POINTER, __pa(eptp) | (0x03 << 3));
 
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
   vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
@@ -621,7 +661,6 @@ static void vcpu_init() {
   vmcs_writel(GUEST_SYSENTER_ESP, rdmsr64(MSR_IA32_SYSENTER_ESP));
   vmcs_writel(GUEST_SYSENTER_EIP, rdmsr64(MSR_IA32_SYSENTER_EIP));
 
-  ept_init();
 
   // required to set the reserved bit
   //vmcs_writel(GUEST_RFLAGS, 2 | (1 << 15) | (1 << 3));
@@ -660,6 +699,21 @@ static void vcpu_init() {
   vmcs_writel(HOST_GS_BASE, a);*/
 
 }
+static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr);
+  // check alignment
+
+  unsigned long off;
+  for (off = 0; off < mr->memory_size; off += PAGE_SIZE) {
+    unsigned long va = mr->userspace_addr + off;
+    addr64_t pa = ptoa_64(pmap_find_phys(kernel_pmap, va));
+    if (pa != 0) {
+      ept_add_page(mr->guest_phys_addr + off, pa);
+    } else {
+      printf("couldn't find vpage %llx\n", pa);
+    }
+  }
+  return 0;
+}
 
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   // maybe these shouldn't be on the stack?
@@ -674,6 +728,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
     case KVM_CREATE_VM:
       // assign an fd, must be a system fd
       // can't do this
+      ept_init();
 
       return 0;
     case KVM_GET_VCPU_MMAP_SIZE:
@@ -685,6 +740,8 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       break;
   }
 
+  if (eptp == NULL) return EINVAL;
+
   /* kvm_vm_ioctl */
   switch (iCmd) {
     case KVM_CREATE_VCPU:
@@ -695,7 +752,8 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       //init_guest_values_from_host();
       return 0;
     case KVM_SET_USER_MEMORY_REGION:
-      return 0;
+      if (pData == NULL) return EINVAL;
+      return kvm_set_user_memory_region((struct kvm_userspace_memory_region*)pData);
     default:
       break;
   }

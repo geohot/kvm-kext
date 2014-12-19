@@ -70,6 +70,10 @@ int main(int argc, char *argv[]) {
   __u8 *guest_ram = (__u8 *)mmap(NULL, RAM_SIZE, 7, MAP_ANON|MAP_SHARED, -1, 0);
   printf("guest ram @ %p\n", guest_ram);
 
+  // nops
+  memset(guest_ram, 0x90, RAM_SIZE);
+  guest_ram[ENTRY_POINT + 0x10] = 0x40;  // inc eax
+
   struct kvm_userspace_memory_region low_memory = {
     .slot = 3,
     .flags = 0,
@@ -80,10 +84,6 @@ int main(int argc, char *argv[]) {
   err = kvm_ioctl(vm_fd, KVM_SET_USER_MEMORY_REGION, &low_memory);
   printf("memory set up: %d\n", err);
 
-  // nops
-  memset(guest_ram, 0x90, RAM_SIZE);
-
-  guest_ram[ENTRY_POINT + 0x10] = 0x40;  // inc eax
 
   int vcpu_fd = kvm_ioctl(vm_fd, KVM_CREATE_VCPU, 0);
   printf("three fds %d %d %d\n", kvm_fd, vm_fd, vcpu_fd);
