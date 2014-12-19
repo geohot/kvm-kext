@@ -492,8 +492,9 @@ void kvm_run(struct vcpu *vcpu) {
   unsigned long host_rsp = vmcs_readl(HOST_RSP);
   unsigned long host_rip = vmcs_readl(HOST_RIP);
   unsigned long host_cr3 = vmcs_readl(HOST_CR3);
+  u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
 
-  printf("entry %ld exit %d(0x%x) qual %X error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, exit_reason, qual, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);
+  printf("entry %ld exit %d(0x%x) qual %X error %ld rsp %lx %lx rip %lx %lx phys 0x%lx\n", entry_error, exit_reason, exit_reason, qual, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3, phys);
   //printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
   printf("vmcs: %lx\n", vcpu->vmcs);
 
@@ -521,12 +522,12 @@ static const u32 vmx_msr_index[] = {
 
 
 // store the physical addresses on the first page, and the virtual addresses on the second page
-unsigned long *eptp = NULL;
+unsigned long *pml4 = NULL;
 
 static void ept_init() {
   // EPT allocation
-	eptp = (unsigned long *)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
-	bzero(eptp, PAGE_SIZE*2);
+	pml4 = (unsigned long *)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+	bzero(pml4, PAGE_SIZE*2);
 }
 
 
@@ -535,45 +536,42 @@ static void ept_init() {
 
 // could probably be managed by http://fxr.watson.org/fxr/source/osfmk/i386/pmap.h
 static void ept_add_page(unsigned long virtual_address, unsigned long physical_address) {
-  int pml4e_idx = (virtual_address >> 39) & 0x1FF;
-  int pdpte_idx = (virtual_address >> 30) & 0x1FF;
-  int pde_idx = (virtual_address >> 21) & 0x1FF;
-  int pte_idx = (virtual_address >> 12) & 0x1FF;
-  unsigned long *pml4e, *pdpte, *pde, *pte;
+  int pml4_idx = (virtual_address >> 39) & 0x1FF;
+  int pdpt_idx = (virtual_address >> 30) & 0x1FF;
+  int pd_idx = (virtual_address >> 21) & 0x1FF;
+  int pt_idx = (virtual_address >> 12) & 0x1FF;
+  unsigned long *pdpt, *pd, *pt;
+  //printf("%d %d %d %d\n", pml4e_idx, pdpte_idx, pde_idx, pte_idx);
 
-  pml4e = (unsigned long*)eptp[PAGE_OFFSET + pdpte_idx];
-  if (pml4e == NULL) {
-    pml4e = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
-    bzero(pml4e, PAGE_SIZE*2);
-    eptp[PAGE_OFFSET + pml4e_idx] = (unsigned long)pml4e;
-    eptp[pml4e_idx] = __pa(pml4e) | EPT_DEFAULTS;
+  // allocate the pdpt in the pml4 if NULL
+  pdpt = (unsigned long*)pml4[PAGE_OFFSET + pml4_idx];
+  if (pdpt == NULL) {
+    pdpt = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+    bzero(pdpt, PAGE_SIZE*2);
+    pml4[PAGE_OFFSET + pml4_idx] = (unsigned long)pdpt;
+    pml4[pml4_idx] = __pa(pdpt) | EPT_DEFAULTS;
   }
 
-  pdpte = (unsigned long*)pml4e[PAGE_OFFSET + pdpte_idx];
-  if (pdpte == NULL) {
-    pdpte = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
-    bzero(pdpte, PAGE_SIZE*2);
-    pml4e[PAGE_OFFSET + pdpte_idx] = (unsigned long)pdpte;
-    pml4e[pdpte_idx] = __pa(pdpte) | EPT_DEFAULTS;
+  // allocate the pd in the pdpt
+  pd = (unsigned long*)pdpt[PAGE_OFFSET + pd_idx];
+  if (pd == NULL) {
+    pd = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+    bzero(pd, PAGE_SIZE*2);
+    pdpt[PAGE_OFFSET + pd_idx] = (unsigned long)pd;
+    pdpt[pdpt_idx] = __pa(pd) | EPT_DEFAULTS;
   }
 
-  pde = (unsigned long*)pdpte[PAGE_OFFSET + pdpte_idx];
-  if (pde == NULL) {
-    pde = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
-    bzero(pde, PAGE_SIZE*2);
-    pdpte[PAGE_OFFSET + pde_idx] = (unsigned long)pde;
-    pdpte[pde_idx] = __pa(pde) | EPT_DEFAULTS;
+  // allocate the pt in the pd
+  pt = (unsigned long*)pd[PAGE_OFFSET + pt_idx];
+  if (pt == NULL) {
+    pt = (unsigned long*)IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+    bzero(pt, PAGE_SIZE);
+    pd[PAGE_OFFSET + pd_idx] = (unsigned long)pt;
+    pd[pd_idx] = __pa(pt) | EPT_DEFAULTS;
   }
 
-  pte = (unsigned long*)pde[PAGE_OFFSET + pde_idx];
-  if (pte == NULL) {
-    pte = (unsigned long*)IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
-    bzero(pte, PAGE_SIZE);
-    pde[PAGE_OFFSET + pde_idx] = (unsigned long)pte;
-    pde[pde_idx] = __pa(pte) | EPT_DEFAULTS;
-  }
-
-  pte[pte_idx] = physical_address | EPT_DEFAULTS;
+  // set the entry in the page table
+  pt[pt_idx] = physical_address | EPT_DEFAULTS;
 }
 
 static void vcpu_init() {
@@ -589,7 +587,7 @@ static void vcpu_init() {
   //vmcs_writel(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
   vmcs_write32(EXCEPTION_BITMAP, 0xffffffff);
 
-  vmcs_writel(EPT_POINTER, __pa(eptp) | (0x03 << 3));
+  vmcs_writel(EPT_POINTER, __pa(pml4) | (0x03 << 3));
 
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
   vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
@@ -775,7 +773,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       break;
   }
 
-  if (eptp == NULL) return EINVAL;
+  if (pml4 == NULL) return EINVAL;
 
   /* kvm_vm_ioctl */
   switch (iCmd) {
