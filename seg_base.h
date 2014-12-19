@@ -34,11 +34,14 @@ static inline u16 kvm_read_ldt(void) {
   return ldt;
 }
 
+struct dtr {
+  unsigned short int limit;
+  unsigned long base;
+} __attribute__((__packed__));
+
 static unsigned long segment_base(u16 selector) {
-  u64 gdtb = 0;
+  struct dtr gdtb;
   asm("sgdt %0\n" : :"m"(gdtb));
-  gdtb = gdtb>>16;
-  if(((gdtb>>47)&0x1)){ gdtb |= 0xffff000000000000ull; }
 
 	struct desc_struct *d;
 	unsigned long table_base;
@@ -47,7 +50,7 @@ static unsigned long segment_base(u16 selector) {
 	if (!(selector & ~3))
 		return 0;
 
-	table_base = gdtb;
+	table_base = gdtb.base;
 
 	if (selector & 4) {           /* from ldt */
 		u16 ldt_selector = kvm_read_ldt();

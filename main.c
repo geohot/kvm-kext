@@ -29,9 +29,10 @@ static void vcpu_init();
 
 #include "seg_base.h"
 
+
 void init_host_values() {
   u16 selector;
-  u64 gdtb = 0, idtb = 0;
+  struct dtr gdtb, idtb;
 
   vmcs_writel(HOST_CR0, get_cr0()); 
   vmcs_writel(HOST_CR3, get_cr3_raw()); 
@@ -54,12 +55,10 @@ void init_host_values() {
   vmcs_writel(HOST_TR_BASE, segment_base(get_tr()));
 
   asm("sgdt %0\n" : :"m"(gdtb));
-  gdtb = gdtb>>16; if(((gdtb>>47)&0x1)){ gdtb |= 0xffff000000000000ull; }
-  vmcs_writel(HOST_GDTR_BASE, gdtb);
+  vmcs_writel(HOST_GDTR_BASE, gdtb.base);
 
   asm("sidt %0\n" : :"m"(idtb));
-  idtb = idtb>>16; if(((idtb>>47)&0x1)){ idtb |= 0xffff000000000000ull; }
-  vmcs_writel(HOST_IDTR_BASE, idtb);
+  vmcs_writel(HOST_IDTR_BASE, idtb.base);
 
   vmcs_writel(HOST_IA32_SYSENTER_CS, rdmsr64(MSR_IA32_SYSENTER_CS));
   vmcs_writel(HOST_IA32_SYSENTER_ESP, rdmsr64(MSR_IA32_SYSENTER_ESP));
@@ -77,9 +76,11 @@ void init_host_values() {
 //#include "vmx.h"
 //#include <linux/kvm_host.h>
 
+
 struct vcpu_arch {
   unsigned long regs[NR_VCPU_REGS];
   unsigned long cr2;
+  struct dtr gdtr, idtr;
 };
 
 //#define NR_AUTOLOAD_MSRS 8
@@ -90,13 +91,6 @@ struct vcpu {
   unsigned long __launched;
   unsigned long fail;
   unsigned long host_rsp;
-
-	//int                   nmsrs;
-	/*struct msr_autoload {
-		unsigned nr;
-		struct vmx_msr_entry guest[NR_AUTOLOAD_MSRS];
-		struct vmx_msr_entry host[NR_AUTOLOAD_MSRS];
-	} msr_autoload;*/
 } __vcpu;
 
 
@@ -230,7 +224,6 @@ void kvm_run(struct vcpu *vcpu) {
   //vmcs_writel(GUEST_RSP, &stackk[0x20]);
   //vmcs_writel(GUEST_RIP, &guest_entry_point);
 
-  asm volatile ("cli");
 
   init_host_values();
 
@@ -251,10 +244,18 @@ void kvm_run(struct vcpu *vcpu) {
   printf("rip: %lx\n", value);*/
 
 	asm(
+    "pushf\n\t"
+    "cli\n\t"
+    
+
 		/* Store host registers */
 		"push %%rdx\n\tpush %%rbp\n\t"
 		"push %%rcx \n\t" /* placeholder for guest rcx */
 		"push %%rcx \n\t"
+
+    "sgdt %c[gdtr](%0)\n\t"
+    "sidt %c[idtr](%0)\n\t"
+
 		"mov %%rsp, %c[host_rsp](%0) \n\t"
 		__ex(ASM_VMX_VMWRITE_RSP_RDX) "\n\t"
 		"1: \n\t"
@@ -323,6 +324,12 @@ void kvm_run(struct vcpu *vcpu) {
 
 		"pop  %%rbp\n\t pop  %%rdx \n\t"
 		//"setbe %c[fail](%0) \n\t"
+    /* my turn */
+
+    "lidt %c[idtr](%0)\n\t"
+    "lgdt %c[gdtr](%0)\n\t"
+
+    "popf\n\t"
 
 	      : : "c"(vcpu), "d"((unsigned long)HOST_RSP),
 		[launched]"i"(offsetof(struct vcpu, __launched)),
@@ -344,13 +351,14 @@ void kvm_run(struct vcpu *vcpu) {
 		[r14]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_R14])),
 		[r15]"i"(offsetof(struct vcpu, arch.regs[VCPU_REGS_R15])),
 		[cr2]"i"(offsetof(struct vcpu, arch.cr2)),
+		[idtr]"i"(offsetof(struct vcpu, arch.idtr)),
+		[gdtr]"i"(offsetof(struct vcpu, arch.gdtr)),
 		[wordsize]"i"(sizeof(ulong))
 	      : "cc", "memory"
 		, "rax", "rbx", "rdi", "rsi"
 		, "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
 	      );
 
-  asm volatile ("sti");
 
   unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
   unsigned long exit_reason = vmcs_read32(VM_EXIT_REASON);
@@ -361,6 +369,7 @@ void kvm_run(struct vcpu *vcpu) {
   unsigned long host_cr3 = vmcs_readl(HOST_CR3);
 
   printf("entry %ld exit %lx error %ld rsp %lx %lx rip %lx %lx\n", entry_error, exit_reason, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3);
+  printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
 
 
   /*asm (
