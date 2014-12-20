@@ -994,6 +994,9 @@ struct kvm_device_attr {
 #define KVM_SET_TSS_ADDR          _IO(KVMIO,   0x47)
 #define KVM_SET_IDENTITY_MAP_ADDR _IOW(KVMIO,  0x48, __u64)
 
+/* added for mac os x */
+#define KVM_MMAP_VCPU           _IOW(KVMIO,   0x49, void *)
+
 /* enable ucontrol for s390 */
 struct kvm_s390_ucas_mapping {
 	__u64 user_addr;

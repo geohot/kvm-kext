@@ -169,6 +169,7 @@ struct vcpu_arch {
 
 struct vcpu {
   vmcs *vmcs;
+  struct kvm_run *kvm_vcpu;
   struct vcpu_arch arch;
   unsigned long __launched;
   unsigned long fail;
@@ -498,7 +499,7 @@ void kvm_run(struct vcpu *vcpu) {
   unsigned long host_cr3 = vmcs_readl(HOST_CR3);
   u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
 
-  printf("entry %ld exit %d(0x%x) qual %X error %ld rsp %lx %lx rip %lx %lx phys 0x%lx\n", entry_error, exit_reason, exit_reason, qual, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3, phys);
+  printf("entry %ld exit %d(0x%x) qual %X error %ld rsp %lx %lx rip %lx %lx phys 0x%llx\n", entry_error, exit_reason, exit_reason, qual, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3, phys);
   //printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
   printf("vmcs: %lx\n", vcpu->vmcs);
 
@@ -757,76 +758,114 @@ static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
 }
 
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
-  // maybe these shouldn't be on the stack?
+  int ret = EOPNOTSUPP;
   iCmd &= 0xFFFFFFFF;
-  //printf("get ioctl %lX with pData %p\n", iCmd, pData);
   /* kvm_ioctl */
   switch (iCmd) {
     case KVM_GET_API_VERSION:
-      return KVM_API_VERSION;
-    case KVM_GET_MSR_INDEX_LIST:
-      return EOPNOTSUPP;
+      ret = KVM_API_VERSION;
+      break;
     case KVM_CREATE_VM:
       // assign an fd, must be a system fd
       // can't do this
       ept_init();
-
-      return 0;
+      ret = 0;
+      break;
     case KVM_GET_VCPU_MMAP_SIZE:
-      return PAGE_SIZE;
+      ret = PAGE_SIZE;
+      break;
     case KVM_CHECK_EXTENSION:
       // no extensions are available
-      return 0;
+      ret = 0;
+      break;
+    // unimplemented
+    case KVM_GET_MSR_INDEX_LIST:
+      // struct kvm_msr_list
+      ret = 0;
+      break;
+    case KVM_GET_SUPPORTED_CPUID:
+      // struct kvm_cpuid2
+      ret = 0;
+      break;
+    case KVM_SET_IDENTITY_MAP_ADDR:
+      ret = 0;
+      break;
+    case KVM_SET_TSS_ADDR:
+      ret = 0;
+      break;
+    case KVM_CREATE_IRQCHIP:
+      ret = 0;
+      break;
     default:
       break;
   }
 
-  if (pml4 == NULL) return EINVAL;
-
-  /* kvm_vm_ioctl */
-  switch (iCmd) {
-    case KVM_CREATE_VCPU:
-      vcpu->vmcs = allocate_vmcs();
-      vmcs_clear(vcpu->vmcs);
-      vmcs_load(vcpu->vmcs);
-      vcpu_init();
-      //init_guest_values_from_host();
-      return 0;
-    case KVM_SET_USER_MEMORY_REGION:
-      if (pData == NULL) return EINVAL;
-      return kvm_set_user_memory_region((struct kvm_userspace_memory_region*)pData);
-    default:
-      break;
+  if (pml4 != NULL) {
+    /* kvm_vm_ioctl */
+    switch (iCmd) {
+      case KVM_CREATE_VCPU:
+        vcpu->vmcs = allocate_vmcs();
+        vcpu->kvm_vcpu = (struct kvm_run *)IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+        bzero(vcpu->kvm_vcpu, PAGE_SIZE);
+        vmcs_clear(vcpu->vmcs);
+        vmcs_load(vcpu->vmcs);
+        vcpu_init();
+        //init_guest_values_from_host();
+        ret = 0;
+        break;
+      case KVM_SET_USER_MEMORY_REGION:
+        if (pData != NULL) {
+          ret = kvm_set_user_memory_region((struct kvm_userspace_memory_region*)pData);
+        }
+        break;
+      default:
+        break;
+    }
   }
 
-  if (vcpu->vmcs == NULL) return EINVAL;
-
-  /* kvm_vcpu_ioctl */
-  switch (iCmd) {
-    case KVM_GET_REGS:
-      if (pData == NULL) return EINVAL;
-      kvm_get_regs(vcpu, (struct kvm_regs *)pData);
-      return 0;
-    case KVM_SET_REGS:
-      if (pData == NULL) return EINVAL;
-      kvm_set_regs(vcpu, (struct kvm_regs *)pData);
-      return 0;
-    case KVM_GET_SREGS:
-      //kvm_get_sregs((user_addr_t)pData);
-      return 0;
-    case KVM_SET_SREGS:
-      if (pData == NULL) return EINVAL;
-      kvm_set_sregs(vcpu, (struct kvm_sregs *)pData);
-      return 0;
-    case KVM_RUN:
-      kvm_run(vcpu);
-      return 0;
-    default:
-      break;
+  if (vcpu->vmcs != NULL) {
+    /* kvm_vcpu_ioctl */
+    switch (iCmd) {
+      case KVM_GET_REGS:
+        if (pData != NULL) {
+          kvm_get_regs(vcpu, (struct kvm_regs *)pData);
+          ret = 0;
+        }
+        break;
+      case KVM_SET_REGS:
+        if (pData != NULL) {
+          kvm_set_regs(vcpu, (struct kvm_regs *)pData);
+          ret = 0;
+        }
+        break;
+      case KVM_GET_SREGS:
+        //kvm_get_sregs((user_addr_t)pData);
+        ret = 0;
+        break;
+      case KVM_SET_SREGS:
+        if (pData != NULL) {
+          kvm_set_sregs(vcpu, (struct kvm_sregs *)pData);
+          ret = 0;
+        }
+        break;
+      case KVM_RUN:
+        kvm_run(vcpu);
+        ret = 0;
+        break;
+      case KVM_MMAP_VCPU:
+        //*(void *)pData = 
+        ret = 0;
+        break;
+      default:
+        break;
+    }
   }
 
-  return EOPNOTSUPP;
+  printf("get ioctl %lX with pData %p return %d\n", iCmd, pData, ret);
+  return ret;
 }
+
+
 
 static struct cdevsw kvm_functions = {
   /*.d_open     = */kvm_dev_open,
@@ -838,6 +877,7 @@ static struct cdevsw kvm_functions = {
   /*.d_reset    = */eno_reset,
   /*.d_ttys     = */NULL,
   /*.d_select   = */eno_select,
+// OS X does not support memory-mapped devices through the mmap() function. Fuckers.
   /*.d_mmap     = */eno_mmap,
   /*.d_strategy = */eno_strat,
   /*.d_getc     = */eno_getc,
