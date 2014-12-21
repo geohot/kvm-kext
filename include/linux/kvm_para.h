@@ -19,11 +19,13 @@
 /* This indicates that the new set of kvmclock msrs
  * are available. The use of 0x11 and 0x12 is deprecated
  */
-/*#define KVM_FEATURE_CLOCKSOURCE2        3
+#define KVM_FEATURE_CLOCKSOURCE2        3
+#ifndef KVM_FEATURE_ASYNC_PF
 #define KVM_FEATURE_ASYNC_PF		4
 #define KVM_FEATURE_STEAL_TIME		5
 #define KVM_FEATURE_PV_EOI		6
-#define KVM_FEATURE_PV_UNHALT		7*/
+#define KVM_FEATURE_PV_UNHALT		7
+#endif
 
 /* The last 8 bits are used to indicate how to interpret the flags field
  * in pvclock structure. If no bits are set, all flags are ignored.

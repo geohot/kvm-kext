@@ -29,6 +29,8 @@ sudo kextutil /tmp/kvm.kext/
 # load the kext
 sudo kextload -v /tmp/kvm.kext
 
+exit
+
 # run test
 cd tests
 gcc cpu_test.c

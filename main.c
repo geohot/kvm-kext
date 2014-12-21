@@ -12,12 +12,18 @@
 #include <IOKit/IOMemoryDescriptor.h>
 #include <i386/vmx.h>
 
+extern "C" {
+extern int  cpu_number(void);
+}
+
 #include <linux/kvm.h>
 #include "kvm_host.h"
 //#include "kvm_cache_regs.h"
 
 #include "vmx_shims.h"
 #include "vmcs.h"
+
+#define DEBUG printf
 
 #define __ex(x) x
 #define __pa vmx_paddr
@@ -263,6 +269,19 @@ static void kvm_set_segment(struct vcpu *vcpu, struct kvm_segment *var, int seg)
 	vmcs_write32(sf->ar_bytes, vmx_segment_access_rights(var));
 }
 
+void kvm_show_regs() {
+  // read them?
+  vcpu->arch.rflags = vmcs_readl(GUEST_RFLAGS);
+  vcpu->arch.regs[VCPU_REGS_RSP] = vmcs_readl(GUEST_RSP);
+  vcpu->arch.regs[VCPU_REGS_RIP] = vmcs_readl(GUEST_RIP);
+
+  printf("eax %08llx ebx %08llx ecx %08llx edx %08llx esi %016llx edi %08llx esp %08llx ebp %08llx eip %08llx rflags %08llx cr0: %lx cr3: %lx cr4: %lx\n",
+    vcpu->arch.regs[VCPU_REGS_RAX], vcpu->arch.regs[VCPU_REGS_RBX], vcpu->arch.regs[VCPU_REGS_RCX], vcpu->arch.regs[VCPU_REGS_RDX],
+    vcpu->arch.regs[VCPU_REGS_RSI], vcpu->arch.regs[VCPU_REGS_RDI], vcpu->arch.regs[VCPU_REGS_RSP], vcpu->arch.regs[VCPU_REGS_RBP],
+    vcpu->arch.regs[VCPU_REGS_RIP], vcpu->arch.rflags,
+    vmcs_readl(GUEST_CR0),vmcs_readl(GUEST_CR3),vmcs_readl(GUEST_CR4));
+}
+
 void kvm_get_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
   vcpu->arch.rflags = vmcs_readl(GUEST_RFLAGS);
   vcpu->arch.regs[VCPU_REGS_RSP] = vmcs_readl(GUEST_RSP);
@@ -318,9 +337,9 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   printf("cr3 %lx %lx\n", sregs->cr3, vmcs_readl(GUEST_CR3));
   printf("cr4 %lx %lx\n", sregs->cr4, vmcs_readl(GUEST_CR4));
 
-  vmcs_writel(GUEST_CR0, sregs->cr0);
+  vmcs_writel(GUEST_CR0, sregs->cr0 | 0x20);
   vmcs_writel(GUEST_CR3, sregs->cr3);
-  vmcs_writel(GUEST_CR4, sregs->cr4);
+  vmcs_writel(GUEST_CR4, sregs->cr4 | (1<<13));
 
   // sysenter msrs?
 
@@ -340,7 +359,7 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   vmcs_write32(GUEST_GDTR_LIMIT, sregs->gdt.limit);
   vmcs_writel(GUEST_GDTR_BASE, sregs->gdt.base);
 
-  vmcs_writel(GUEST_IA32_EFER, sregs->efer);
+  //vmcs_writel(GUEST_IA32_EFER, sregs->efer);
 
 	return 0;
 }
@@ -723,6 +742,7 @@ static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
   // check alignment
   unsigned long off;
   IOMemoryDescriptor *md = IOMemoryDescriptor::withAddressRange(mr->userspace_addr, mr->memory_size, kIODirectionInOut, current_task());
+  DEBUG("MAPPING %p SLOT %d IN GUEST AT %p-%p\n", mr->userspace_addr, mr->slot, mr->guest_phys_addr, mr->guest_phys_addr + mr->memory_size);
 
   // wire in the memory
   IOReturn ret = md->prepare(kIODirectionInOut);
@@ -757,16 +777,25 @@ static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
   return 0;
 }
 
+static int kvm_get_supported_cpuid(struct kvm_cpuid2 *cpuid) {
+  cpuid->nent = 0;
+  return 0;
+}
+
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   int ret = EOPNOTSUPP;
   int test;
   iCmd &= 0xFFFFFFFF;
+
+  if (pData == NULL) goto fail;
+
   /* kvm_ioctl */
   switch (iCmd) {
     case KVM_GET_API_VERSION:
       ret = KVM_API_VERSION;
       break;
     case KVM_CREATE_VM:
+      DEBUG("create vm\n");
       // assign an fd, must be a system fd
       // can't do this
       ept_init();
@@ -776,11 +805,12 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       ret = PAGE_SIZE;
       break;
     case KVM_CHECK_EXTENSION:
-      if (pData == NULL) break;
       test = *(int*)pData;
       if (test == KVM_CAP_USER_MEMORY || test == KVM_CAP_DESTROY_MEMORY_REGION_WORKS) {
         ret = 1;
       } else if (test == KVM_CAP_SET_TSS_ADDR || test == KVM_CAP_EXT_CPUID || test == KVM_CAP_MP_STATE) {
+        ret = 1;
+      } else if (test == KVM_CAP_SYNC_MMU) {
         ret = 1;
       } else {
         // most extensions aren't available
@@ -793,8 +823,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       ret = 0;
       break;
     case KVM_GET_SUPPORTED_CPUID:
-      // struct kvm_cpuid2
-      ret = 0;
+      ret = kvm_get_supported_cpuid((struct kvm_cpuid2 *)pData);
       break;
     case KVM_SET_IDENTITY_MAP_ADDR:
       ret = 0;
@@ -813,6 +842,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
     /* kvm_vm_ioctl */
     switch (iCmd) {
       case KVM_CREATE_VCPU:
+        DEBUG("create vcpu\n");
         vcpu->vmcs = allocate_vmcs();
         vcpu->kvm_vcpu = (struct kvm_run *)IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
         bzero(vcpu->kvm_vcpu, PAGE_SIZE);
@@ -823,9 +853,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
         ret = 0;
         break;
       case KVM_SET_USER_MEMORY_REGION:
-        if (pData != NULL) {
-          ret = kvm_set_user_memory_region((struct kvm_userspace_memory_region*)pData);
-        }
+        ret = kvm_set_user_memory_region((struct kvm_userspace_memory_region*)pData);
         break;
       default:
         break;
@@ -833,32 +861,31 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
   }
 
   if (vcpu->vmcs != NULL) {
+    // processor issue?
+    vmcs_load(vcpu->vmcs);
+
     /* kvm_vcpu_ioctl */
     switch (iCmd) {
       case KVM_GET_REGS:
-        if (pData != NULL) {
-          kvm_get_regs(vcpu, (struct kvm_regs *)pData);
-          ret = 0;
-        }
+        kvm_get_regs(vcpu, (struct kvm_regs *)pData);
+        ret = 0;
         break;
       case KVM_SET_REGS:
-        if (pData != NULL) {
-          kvm_set_regs(vcpu, (struct kvm_regs *)pData);
-          ret = 0;
-        }
+        kvm_set_regs(vcpu, (struct kvm_regs *)pData);
+        ret = 0;
         break;
       case KVM_GET_SREGS:
         //kvm_get_sregs((user_addr_t)pData);
         ret = 0;
         break;
       case KVM_SET_SREGS:
-        if (pData != NULL) {
-          kvm_set_sregs(vcpu, (struct kvm_sregs *)pData);
-          ret = 0;
-        }
+        kvm_set_sregs(vcpu, (struct kvm_sregs *)pData);
+        ret = 0;
         break;
       case KVM_RUN:
+        kvm_show_regs();
         kvm_run(vcpu);
+        kvm_show_regs();
         ret = 0;
         break;
       case KVM_MMAP_VCPU:
@@ -875,9 +902,12 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       default:
         break;
     }
+
+    vmcs_clear(vcpu->vmcs);
   }
 
-  printf("get ioctl %lX with pData %p return %d\n", iCmd, pData, ret);
+fail:
+  printf("%d %p get ioctl %lX with pData %p return %d\n", cpu_number(), pProcess, iCmd, pData, ret);
   return ret;
 }
 

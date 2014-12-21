@@ -34,7 +34,9 @@ void enter_32(int vcpu_fd) {
     .ldt = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 },
     .gdt = { 0, 0 },
     .idt = { 0, 0 },
-    .cr0 = 0x37,
+    //.cr0 = 0x37,
+    //.cr0 = 0x60000010,
+    .cr0 = 0x20,
     .cr3 = 0,
     .cr4 = 0x2000,  // VMXE bit is required?
     .efer = 0,
