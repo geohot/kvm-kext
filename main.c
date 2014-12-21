@@ -759,6 +759,7 @@ static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
 
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   int ret = EOPNOTSUPP;
+  int test;
   iCmd &= 0xFFFFFFFF;
   /* kvm_ioctl */
   switch (iCmd) {
@@ -775,8 +776,16 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       ret = PAGE_SIZE;
       break;
     case KVM_CHECK_EXTENSION:
-      // no extensions are available
-      ret = 0;
+      if (pData == NULL) break;
+      test = *(int*)pData;
+      if (test == KVM_CAP_USER_MEMORY || test == KVM_CAP_DESTROY_MEMORY_REGION_WORKS) {
+        ret = 1;
+      } else if (test == KVM_CAP_SET_TSS_ADDR || test == KVM_CAP_EXT_CPUID || test == KVM_CAP_MP_STATE) {
+        ret = 1;
+      } else {
+        // most extensions aren't available
+        ret = 0;
+      }
       break;
     // unimplemented
     case KVM_GET_MSR_INDEX_LIST:
@@ -854,6 +863,13 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
         break;
       case KVM_MMAP_VCPU:
         //*(void *)pData = 
+        ret = 0;
+        break;
+      case KVM_SET_SIGNAL_MASK:
+        // signals on kvm run?
+        ret = 0;
+        break;
+      case KVM_SET_CPUID2:
         ret = 0;
         break;
       default:
