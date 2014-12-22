@@ -505,11 +505,12 @@ void kvm_run(struct vcpu *vcpu) {
 		, "rax", "rbx", "rdi", "rsi"
     // "rsp", "rbp", "rcx", "rdx"
 		, "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
-	      );
+  );
 
+  
+  vcpu->kvm_vcpu->exit_reason = vmcs_read32(VM_EXIT_REASON);
 
   unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
-  unsigned int exit_reason = vmcs_read32(VM_EXIT_REASON);
   unsigned int qual = vmcs_read32(EXIT_QUALIFICATION);
   unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
   //unsigned long intr = vmcs_read32(VM_EXIT_INTR_INFO);
@@ -518,7 +519,9 @@ void kvm_run(struct vcpu *vcpu) {
   unsigned long host_cr3 = vmcs_readl(HOST_CR3);
   u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
 
-  printf("entry %ld exit %d(0x%x) qual %X error %ld rsp %lx %lx rip %lx %lx phys 0x%llx\n", entry_error, exit_reason, exit_reason, qual, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3, phys);
+  printf("entry %ld exit %d(0x%x) qual %X error %ld rsp %lx %lx rip %lx %lx phys 0x%llx\n",
+    entry_error, vcpu->kvm_vcpu->exit_reason, vcpu->kvm_vcpu->exit_reason,
+    qual, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3, phys);
   //printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
   printf("vmcs: %lx\n", vcpu->vmcs);
 
@@ -771,7 +774,7 @@ static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
       ept_add_page(mr->guest_phys_addr + off, pa);
     } else {
       printf("couldn't find vpage %lx\n", va);
-      return 0;
+      return EINVAL;
     }
   }
   return 0;
@@ -891,10 +894,10 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
         ret = 0;
         break;
       case KVM_MMAP_VCPU:
-        md = IOMemoryDescriptor::withAddress(vcpu->kvm_vcpu, PAGE_SIZE, kIODirectionInOut);
+        md = IOMemoryDescriptor::withAddressRange((mach_vm_address_t)vcpu->kvm_vcpu, PAGE_SIZE, kIODirectionInOut, kernel_task);
         mm = md->createMappingInTask(current_task(), NULL, kIOMapAnywhere);
-        printf("mmaped at %p\n", getAddress());
-        *(void *)pData = getAddress();
+        DEBUG("mmaped at %p %p\n", *(mach_vm_address_t *)pData, mm->getAddress());
+        *(mach_vm_address_t *)pData = mm->getAddress();
         ret = 0;
         break;
       case KVM_SET_SIGNAL_MASK:

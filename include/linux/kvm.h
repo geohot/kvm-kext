@@ -995,7 +995,8 @@ struct kvm_device_attr {
 #define KVM_SET_IDENTITY_MAP_ADDR _IOW(KVMIO,  0x48, __u64)
 
 /* added for mac os x */
-#define KVM_MMAP_VCPU           _IOW(KVMIO,   0x49, void *)
+// IOWR works, IOW and IOR don't
+#define KVM_MMAP_VCPU           _IOWR(KVMIO,   0x49, void *)
 
 /* enable ucontrol for s390 */
 struct kvm_s390_ucas_mapping {
