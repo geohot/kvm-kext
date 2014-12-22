@@ -7,10 +7,14 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+//#include <string.h>
 
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <i386/vmx.h>
+
+#define VCPU_SIZE (PAGE_SIZE*2)
+#define KVM_PIO_PAGE_OFFSET 1
 
 extern "C" {
 extern int  cpu_number(void);
@@ -50,6 +54,7 @@ struct vcpu_arch {
   unsigned long cr2;
   struct dtr host_gdtr, host_idtr;
   unsigned short int host_ldtr;
+  void *pio_data;
 };
 
 //#define NR_AUTOLOAD_MSRS 8
@@ -61,6 +66,7 @@ struct vcpu {
   unsigned long __launched;
   unsigned long fail;
   unsigned long host_rsp;
+  int pending_io;
 } __vcpu;
 
 static void skip_emulated_instruction(struct vcpu *vcpu) {
@@ -70,6 +76,38 @@ static void skip_emulated_instruction(struct vcpu *vcpu) {
 // TODO: check for RIP and things
 u64 kvm_register_read(struct vcpu *vcpu, int reg) { return vcpu->arch.regs[reg]; }
 void kvm_register_write(struct vcpu *vcpu, int reg, u64 value) { vcpu->arch.regs[reg] = value; }
+
+static int handle_io(struct vcpu *vcpu) {
+  /*u32 inter = vmcs_read32(GUEST_INTERRUPTIBILITY_INFO);
+  u32 activity = vmcs_read32(GUEST_ACTIVITY_STATE);
+  u64 debug = vmcs_readl(GUEST_IA32_DEBUGCTL);
+  u64 pending_debug = vmcs_readl(GUEST_PENDING_DBG_EXCEPTIONS);
+  u64 gla = vmcs_readl(GUEST_LINEAR_ADDRESS);*/
+
+  unsigned long exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
+  int in = (exit_qualification & 8) != 0;
+
+  vcpu->kvm_vcpu->io.direction = in ? KVM_EXIT_IO_IN : KVM_EXIT_IO_OUT;
+  vcpu->kvm_vcpu->io.size = (exit_qualification & 7) + 1;
+  vcpu->kvm_vcpu->io.port = exit_qualification >> 16;
+  vcpu->kvm_vcpu->io.count = 1;
+  vcpu->kvm_vcpu->io.data_offset = KVM_PIO_PAGE_OFFSET * PAGE_SIZE;
+
+  unsigned long val = 0;
+  if (!in) {
+    val = kvm_register_read(vcpu, VCPU_REGS_RAX);
+    memcpy(vcpu->arch.pio_data, &val, min(vcpu->kvm_vcpu->io.size * vcpu->kvm_vcpu->io.count, 8));
+  } else {
+    vcpu->pending_io = 1;
+  }
+
+  //printf("io 0x%X %d inter %x %x debug %lx %lx gla %lx\n", vcpu->kvm_vcpu->io.port, vcpu->kvm_vcpu->io.direction, inter, activity, debug, pending_debug, gla);
+  printf("io 0x%X %d data %lx\n", vcpu->kvm_vcpu->io.port, vcpu->kvm_vcpu->io.direction, val);
+
+  vcpu->kvm_vcpu->exit_reason = KVM_EXIT_IO;
+  skip_emulated_instruction(vcpu);
+  return 0;
+}
 
 static int handle_cpuid(struct vcpu *vcpu) {
 	u32 function, eax, ebx, ecx, edx;
@@ -103,6 +141,7 @@ static int handle_cpuid(struct vcpu *vcpu) {
 
 static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
 	[EXIT_REASON_CPUID]                   = handle_cpuid,
+  [EXIT_REASON_IO_INSTRUCTION]          = handle_io,
 };
 
 static const int kvm_vmx_max_exit_handlers = ARRAY_SIZE(kvm_vmx_exit_handlers);
@@ -308,6 +347,13 @@ static const struct kvm_vmx_segment_field {
 	VMX_SEGMENT_FIELD(LDTR),
 };
 
+static void kvm_get_segment(struct vcpu *vcpu, struct kvm_segment *var, int seg) {
+	const struct kvm_vmx_segment_field *sf = &kvm_vmx_segment_fields[seg];
+  var->base = vmcs_readl(sf->base);
+  var->limit = vmcs_read32(sf->limit);
+  var->selector = vmcs_read16(sf->selector);
+}
+
 static void kvm_set_segment(struct vcpu *vcpu, struct kvm_segment *var, int seg) {
 	const struct kvm_vmx_segment_field *sf = &kvm_vmx_segment_fields[seg];
 	vmcs_writel(sf->base, var->base);
@@ -366,7 +412,15 @@ int kvm_get_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   sregs->cr3 = vmcs_readl(GUEST_CR3);
   sregs->cr4 = vmcs_readl(GUEST_CR4);
 
-  // TODO: read the segments
+  // guest segment registers
+	kvm_get_segment(vcpu, &sregs->cs, VCPU_SREG_CS);
+	kvm_get_segment(vcpu, &sregs->ss, VCPU_SREG_SS);
+	kvm_get_segment(vcpu, &sregs->ds, VCPU_SREG_DS);
+	kvm_get_segment(vcpu, &sregs->es, VCPU_SREG_ES);
+	kvm_get_segment(vcpu, &sregs->fs, VCPU_SREG_FS);
+	kvm_get_segment(vcpu, &sregs->gs, VCPU_SREG_GS);
+	kvm_get_segment(vcpu, &sregs->tr, VCPU_SREG_TR);
+	kvm_get_segment(vcpu, &sregs->ldt, VCPU_SREG_LDTR);
 
   // idtr and gdtr
   sregs->idt.limit = vmcs_read32(GUEST_IDTR_LIMIT);
@@ -415,6 +469,7 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
 }
 
 void kvm_run(struct vcpu *vcpu) {
+  //printf("%x %x %x\n", vmcs_read32(CPU_BASED_VM_EXEC_CONTROL), vmcs_read32(PIN_BASED_VM_EXEC_CONTROL), vmcs_read32(SECONDARY_VM_EXEC_CONTROL));
   //vmcs_writel(GUEST_RSP, &stackk[0x20]);
   //vmcs_writel(GUEST_RIP, &guest_entry_point);
 
@@ -656,8 +711,10 @@ static void vcpu_init() {
 
   vmcs_writel(EPT_POINTER, __pa(pml4) | (0x03 << 3));
 
+
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
-  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING);
+  //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
   vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
 
   //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING);
@@ -827,9 +884,19 @@ static int kvm_get_supported_cpuid(struct kvm_cpuid2 *cpuid) {
 }
 
 static int kvm_run_wrapper(struct vcpu *vcpu) {
+
   int maxcont = 0;
   int cont = 1;
+  unsigned long val = 0;
+
+  if (vcpu->pending_io) {
+    memcpy(&val, vcpu->arch.pio_data, min(vcpu->kvm_vcpu->io.size * vcpu->kvm_vcpu->io.count, 8));
+    kvm_register_write(vcpu, VCPU_REGS_RAX, val);
+    vcpu->pending_io = 0;
+  }
+
   unsigned long exit_reason;
+  vcpu->kvm_vcpu->exit_reason = 0;
   while (cont && (maxcont++) < 1000) {
     //kvm_show_regs();
     kvm_run(vcpu);
@@ -845,17 +912,17 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
       cont = 0;
     }
   }
-  printf("looped %d times\n", maxcont);
   kvm_show_regs();
 
   unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
   unsigned int qual = vmcs_read32(EXIT_QUALIFICATION);
   unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
-  //unsigned long intr = vmcs_read32(VM_EXIT_INTR_INFO);
+  unsigned long intr = vmcs_read32(VM_EXIT_INTR_INFO);
+  unsigned long intr_status = vmcs_readl(GUEST_INTR_STATUS);
   u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
 
-  printf("entry %ld exit %d(0x%x) qual %X error %ld phys 0x%llx\n",
-    entry_error, exit_reason, exit_reason, qual, error, phys);
+  printf("%3d -- entry %ld exit %d(0x%x) qual %X error %ld phys 0x%llx intr %lx intr_status %lx\n",
+    maxcont, entry_error, exit_reason, exit_reason, qual, error, phys, intr, intr_status);
   return 0;
 }
 
@@ -887,7 +954,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       ret = 0;
       break;
     case KVM_GET_VCPU_MMAP_SIZE:
-      ret = PAGE_SIZE;
+      ret = VCPU_SIZE;
       break;
     case KVM_CHECK_EXTENSION:
       test = *(int*)pData;
@@ -929,8 +996,10 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       case KVM_CREATE_VCPU:
         DEBUG("create vcpu\n");
         vcpu->vmcs = allocate_vmcs();
-        vcpu->kvm_vcpu = (struct kvm_run *)IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
-        bzero(vcpu->kvm_vcpu, PAGE_SIZE);
+        vcpu->kvm_vcpu = (struct kvm_run *)IOMallocAligned(VCPU_SIZE, PAGE_SIZE);
+        vcpu->arch.pio_data = ((unsigned char *)vcpu->kvm_vcpu + KVM_PIO_PAGE_OFFSET * PAGE_SIZE);
+        vcpu->pending_io = 0;
+        bzero(vcpu->kvm_vcpu, VCPU_SIZE);
         vmcs_clear(vcpu->vmcs);
         vmcs_load(vcpu->vmcs);
         vcpu_init();
@@ -967,7 +1036,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
         ret = kvm_run_wrapper(vcpu);
         break;
       case KVM_MMAP_VCPU:
-        md = IOMemoryDescriptor::withAddressRange((mach_vm_address_t)vcpu->kvm_vcpu, PAGE_SIZE, kIODirectionInOut, kernel_task);
+        md = IOMemoryDescriptor::withAddressRange((mach_vm_address_t)vcpu->kvm_vcpu, VCPU_SIZE, kIODirectionInOut, kernel_task);
         mm = md->createMappingInTask(current_task(), NULL, kIOMapAnywhere);
         DEBUG("mmaped at %p %p\n", *(mach_vm_address_t *)pData, mm->getAddress());
         *(mach_vm_address_t *)pData = mm->getAddress();
@@ -985,10 +1054,11 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
     }
 
     vmcs_clear(vcpu->vmcs);
+    vcpu->__launched = 0;
   }
 
 fail:
-  printf("%d %p get ioctl %lX with pData %p return %d\n", cpu_number(), pProcess, iCmd, pData, ret);
+  //printf("%d %p get ioctl %lX with pData %p return %d\n", cpu_number(), pProcess, iCmd, pData, ret);
   return ret;
 }
 
