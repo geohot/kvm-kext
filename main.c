@@ -77,7 +77,20 @@ static int handle_cpuid(struct vcpu *vcpu) {
 	function = eax = kvm_register_read(vcpu, VCPU_REGS_RAX);
 	ecx = kvm_register_read(vcpu, VCPU_REGS_RCX);
 
-  // do cpuid
+  // lol emulate
+  asm(
+      "push %%rbx       \n"
+      "cpuid             \n"
+      "mov  %%rbx, %%rsi\n"
+      "pop  %%rbx       \n"
+    : "=a"   (eax),
+      "=S"   (ebx),
+      "=c"   (ecx),
+      "=d"   (edx)
+    : "a"    (eax),
+      "S"    (ebx),
+      "c"    (ecx),
+      "d"    (edx));
 
 	kvm_register_write(vcpu, VCPU_REGS_RAX, eax);
 	kvm_register_write(vcpu, VCPU_REGS_RBX, ebx);
@@ -772,7 +785,7 @@ static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
   // check alignment
   unsigned long off;
   IOMemoryDescriptor *md = IOMemoryDescriptor::withAddressRange(mr->userspace_addr, mr->memory_size, kIODirectionInOut, current_task());
-  DEBUG("MAPPING %p SLOT %d IN GUEST AT %p-%p\n", mr->userspace_addr, mr->slot, mr->guest_phys_addr, mr->guest_phys_addr + mr->memory_size);
+  DEBUG("MAPPING %p WITH FLAGS %x SLOT %d IN GUEST AT %p-%p\n", mr->userspace_addr, mr->flags, mr->slot, mr->guest_phys_addr, mr->guest_phys_addr + mr->memory_size);
 
   // wire in the memory
   IOReturn ret = md->prepare(kIODirectionInOut);
@@ -808,6 +821,7 @@ static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
 }
 
 static int kvm_get_supported_cpuid(struct kvm_cpuid2 *cpuid) {
+  // how do I copy the rest from user space if I only have a kernel space address?
   cpuid->nent = 0;
   return 0;
 }
@@ -819,7 +833,6 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
   while (cont && (maxcont++) < 1000) {
     //kvm_show_regs();
     kvm_run(vcpu);
-    kvm_show_regs();
 
     exit_reason = vmcs_read32(VM_EXIT_REASON);
 
@@ -833,6 +846,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
     }
   }
   printf("looped %d times\n", maxcont);
+  kvm_show_regs();
 
   unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
   unsigned int qual = vmcs_read32(EXIT_QUALIFICATION);
@@ -846,7 +860,8 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
 }
 
 static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
-  printf("got %d cpuids\n", cpuid2->nent);
+  printf("got %d cpuids at %p\n", cpuid2->nent, cpuid2);
+
   return 0;
 }
 

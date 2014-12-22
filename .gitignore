@@ -5,4 +5,5 @@
 kvm.kext/Contents/MacOS/kvm
 tests/a.out
 main.s
+.DS_Store
 
