@@ -16,6 +16,7 @@
 #define VCPU_SIZE (PAGE_SIZE*2)
 #define KVM_PIO_PAGE_OFFSET 1
 
+
 extern "C" {
 extern int  cpu_number(void);
 }
@@ -46,6 +47,11 @@ static void vcpu_init();
 
 //#include "vmx.h"
 //#include <linux/kvm_host.h>
+
+#include <sys/kernel.h>
+#include <kern/locks.h>
+
+lck_mtx_t *ioctl_lock;
 
 
 struct vcpu_arch {
@@ -932,9 +938,13 @@ static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
   return 0;
 }
 
+
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   int ret = EOPNOTSUPP;
   int test;
+
+  lck_mtx_lock(ioctl_lock);
+
   iCmd &= 0xFFFFFFFF;
   IOMemoryDescriptor *md;
   IOMemoryMap *mm;
@@ -1059,6 +1069,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
 
 fail:
   //printf("%d %p get ioctl %lX with pData %p return %d\n", cpu_number(), pProcess, iCmd, pData, ret);
+  lck_mtx_unlock(ioctl_lock);
   return ret;
 }
 
@@ -1089,6 +1100,15 @@ kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
   int ret;
   printf("MyKext has started.\n");
   //printf("host rip is %lx\n", &vmexit_handler);
+
+  static lck_grp_t  *mp_lock_grp;
+  static lck_attr_t *mp_lock_attr;
+  static lck_grp_attr_t *mp_lock_grp_attr;
+
+  mp_lock_grp_attr = lck_grp_attr_alloc_init();
+  mp_lock_grp = lck_grp_alloc_init("vmx", mp_lock_grp_attr);
+  mp_lock_attr = lck_attr_alloc_init();
+  ioctl_lock = lck_mtx_alloc_init(mp_lock_grp, mp_lock_attr);
 
   ret = host_vmxon(FALSE);
   IOLog("host_vmxon: %d\n", ret);
