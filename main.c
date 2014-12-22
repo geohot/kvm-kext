@@ -111,6 +111,7 @@ static int handle_io(struct vcpu *vcpu) {
   //printf("io 0x%X %d data %lx\n", vcpu->kvm_vcpu->io.port, vcpu->kvm_vcpu->io.direction, val);
 
   vcpu->kvm_vcpu->exit_reason = KVM_EXIT_IO;
+  //vcpu->kvm_vcpu->hw.hardware_exit_reason
   skip_emulated_instruction(vcpu);
   return 0;
 }
@@ -145,9 +146,23 @@ static int handle_cpuid(struct vcpu *vcpu) {
   return 1;
 }
 
+static int handle_rdmsr(struct vcpu *vcpu) {
+  printf("rdmsr %lx\n", vcpu->arch.regs[VCPU_REGS_RCX]);
+  skip_emulated_instruction(vcpu);
+  return 1;
+}
+
+static int handle_wrmsr(struct vcpu *vcpu) {
+  printf("wrmsr %lx\n", vcpu->arch.regs[VCPU_REGS_RCX]);
+  skip_emulated_instruction(vcpu);
+  return 1;
+}
+
 static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
 	[EXIT_REASON_CPUID]                   = handle_cpuid,
   [EXIT_REASON_IO_INSTRUCTION]          = handle_io,
+  [EXIT_REASON_MSR_READ]                = handle_rdmsr,
+  [EXIT_REASON_MSR_WRITE]               = handle_wrmsr,
 };
 
 static const int kvm_vmx_max_exit_handlers = ARRAY_SIZE(kvm_vmx_exit_handlers);
@@ -667,7 +682,7 @@ static void ept_add_page(unsigned long virtual_address, unsigned long physical_a
   int pd_idx = (virtual_address >> 21) & 0x1FF;
   int pt_idx = (virtual_address >> 12) & 0x1FF;
   unsigned long *pdpt, *pd, *pt;
-  printf("%p @ %d %d %d %d\n", virtual_address, pml4_idx, pdpt_idx, pd_idx, pt_idx);
+  //printf("%p @ %d %d %d %d\n", virtual_address, pml4_idx, pdpt_idx, pd_idx, pt_idx);
 
   // allocate the pdpt in the pml4 if NULL
   pdpt = (unsigned long*)pml4[PAGE_OFFSET + pml4_idx];
@@ -868,6 +883,7 @@ static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
   //printf("current_pmap is %p\n", get_task_pmap(ct));
   printf("kernel_pmap is %p\n", kernel_pmap);*/
 
+  // TODO: support KVM_MEM_READONLY
   for (off = 0; off < mr->memory_size; off += PAGE_SIZE) {
     unsigned long va = mr->userspace_addr + off;
     addr64_t pa = md->getPhysicalSegment(off, NULL, kIOMemoryMapperNone);
@@ -931,6 +947,9 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
       entry_error, exit_reason, exit_reason, qual, error, phys, intr, vcpu->arch.regs[VCPU_REGS_RIP], vcpu->arch.regs[VCPU_REGS_RSP]);
   }
   return 0;
+}
+static int kvm_set_msrs(struct vcpu *vcpu, struct kvm_msrs *msrs) {
+  printf("got %d msrs at %p\n", msrs->nmsrs, msrs);
 }
 
 static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
@@ -1060,6 +1079,9 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       case KVM_SET_SIGNAL_MASK:
         // signals on kvm run?
         ret = 0;
+        break;
+      case KVM_SET_MSRS:
+        ret = kvm_set_msrs(vcpu, (struct kvm_msrs *)pData);
         break;
       case KVM_SET_CPUID2:
         ret = kvm_set_cpuid2(vcpu, (struct kvm_cpuid2 *)pData);
