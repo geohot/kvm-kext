@@ -1,9 +1,12 @@
 static inline unsigned long vmcs_readl(unsigned long field)
 {
-	unsigned long value;
+	unsigned long value = 0xBADC0DE;
+	u8 error;
 
-	asm volatile (__ex_clear(ASM_VMX_VMREAD_RDX_RAX, "%0")
-		      : "=a"(value) : "d"(field) : "cc");
+	asm volatile (__ex_clear(ASM_VMX_VMREAD_RDX_RAX "; setna %1", "%0")
+		      : "=a"(value), "=q"(error) : "a"(value), "d"(field) : "cc");
+	if (unlikely(error))
+    printf("vmread error: reg %lx value %lx\n", field, value);
 	return value;
 }
 
@@ -22,11 +25,6 @@ static inline u64 vmcs_read64(unsigned long field)
 	return vmcs_readl(field);
 }
 
-static inline void vmwrite_error(unsigned long field, unsigned long value)
-{
-	printf("vmwrite error: reg %lx value %lx (err %d)\n", field, value, vmcs_read32(VM_INSTRUCTION_ERROR));
-}
-
 static void vmcs_writel(unsigned long field, unsigned long value)
 {
   //printf("write: %lx <- %lx\n", field, value);
@@ -35,7 +33,7 @@ static void vmcs_writel(unsigned long field, unsigned long value)
 	asm volatile (__ex(ASM_VMX_VMWRITE_RAX_RDX) "; setna %0"
 		       : "=q"(error) : "a"(value), "d"(field) : "cc");
 	if (unlikely(error))
-		vmwrite_error(field, value);
+    printf("vmwrite error: reg %lx value %lx (err %d)\n", field, value, vmcs_read32(VM_INSTRUCTION_ERROR));
 }
 
 static void vmcs_write16(unsigned long field, u16 value)

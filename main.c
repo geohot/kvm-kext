@@ -16,7 +16,6 @@
 #define VCPU_SIZE (PAGE_SIZE*2)
 #define KVM_PIO_PAGE_OFFSET 1
 
-
 extern "C" {
 extern int  cpu_number(void);
 }
@@ -51,8 +50,9 @@ static void vcpu_init();
 #include <sys/kernel.h>
 #include <kern/locks.h>
 
-lck_mtx_t *ioctl_lock;
-
+/* using a spinlock here seems to fix the problem of the thread
+   being migrated to a different CPU while i'm working */
+lck_spin_t *ioctl_lock;
 
 struct vcpu_arch {
   unsigned long regs[NR_VCPU_REGS];
@@ -108,7 +108,7 @@ static int handle_io(struct vcpu *vcpu) {
   }
 
   //printf("io 0x%X %d inter %x %x debug %lx %lx gla %lx\n", vcpu->kvm_vcpu->io.port, vcpu->kvm_vcpu->io.direction, inter, activity, debug, pending_debug, gla);
-  printf("io 0x%X %d data %lx\n", vcpu->kvm_vcpu->io.port, vcpu->kvm_vcpu->io.direction, val);
+  //printf("io 0x%X %d data %lx\n", vcpu->kvm_vcpu->io.port, vcpu->kvm_vcpu->io.direction, val);
 
   vcpu->kvm_vcpu->exit_reason = KVM_EXIT_IO;
   skip_emulated_instruction(vcpu);
@@ -282,8 +282,7 @@ static void vmcs_load(struct vmcs *vmcs) {
 			: "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
 			: "cc", "memory");
 	if (error)
-		printf("kvm: vmptrld %p/%llx failed\n",
-		       vmcs, phys_addr);
+		printf("kvm: vmptrld %p/%llx failed\n", vmcs, phys_addr);
 }
 
 
@@ -295,8 +294,7 @@ static void vmcs_clear(struct vmcs *vmcs) {
 		      : "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
 		      : "cc", "memory");
 	if (error)
-		printf("kvm: vmclear fail: %p/%llx\n",
-		       vmcs, phys_addr);
+		printf("kvm: vmclear fail: %p/%llx\n", vmcs, phys_addr);
 }
 
 
@@ -890,7 +888,7 @@ static int kvm_get_supported_cpuid(struct kvm_cpuid2 *cpuid) {
 }
 
 static int kvm_run_wrapper(struct vcpu *vcpu) {
-
+  int cpun = cpu_number();
   int maxcont = 0;
   int cont = 1;
   unsigned long val = 0;
@@ -918,17 +916,18 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
       cont = 0;
     }
   }
-  kvm_show_regs();
+  //kvm_show_regs();
 
   unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
   unsigned int qual = vmcs_read32(EXIT_QUALIFICATION);
   unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
   unsigned long intr = vmcs_read32(VM_EXIT_INTR_INFO);
-  unsigned long intr_status = vmcs_readl(GUEST_INTR_STATUS);
+  //unsigned long intr_status = vmcs_readl(GUEST_INTR_STATUS);
   u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
 
-  printf("%3d -- entry %ld exit %d(0x%x) qual %X error %ld phys 0x%llx intr %lx intr_status %lx\n",
-    maxcont, entry_error, exit_reason, exit_reason, qual, error, phys, intr, intr_status);
+  printf("%3d -(%d,%d)- entry %ld exit %d(0x%x) qual %X error %ld phys 0x%llx intr %lx   rip %lx  rsp %lx\n",
+    maxcont, cpun, cpu_number(),
+    entry_error, exit_reason, exit_reason, qual, error, phys, intr, vcpu->arch.regs[VCPU_REGS_RIP], vcpu->arch.regs[VCPU_REGS_RSP]);
   return 0;
 }
 
@@ -943,7 +942,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
   int ret = EOPNOTSUPP;
   int test;
 
-  lck_mtx_lock(ioctl_lock);
+  lck_spin_lock(ioctl_lock);
 
   iCmd &= 0xFFFFFFFF;
   IOMemoryDescriptor *md;
@@ -1004,6 +1003,10 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
     /* kvm_vm_ioctl */
     switch (iCmd) {
       case KVM_CREATE_VCPU:
+        if (vcpu->vmcs != NULL) {
+          ret = EINVAL;
+          break;
+        }
         DEBUG("create vcpu\n");
         vcpu->vmcs = allocate_vmcs();
         vcpu->kvm_vcpu = (struct kvm_run *)IOMallocAligned(VCPU_SIZE, PAGE_SIZE);
@@ -1069,7 +1072,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
 
 fail:
   //printf("%d %p get ioctl %lX with pData %p return %d\n", cpu_number(), pProcess, iCmd, pData, ret);
-  lck_mtx_unlock(ioctl_lock);
+  lck_spin_unlock(ioctl_lock);
   return ret;
 }
 
@@ -1108,7 +1111,7 @@ kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
   mp_lock_grp_attr = lck_grp_attr_alloc_init();
   mp_lock_grp = lck_grp_alloc_init("vmx", mp_lock_grp_attr);
   mp_lock_attr = lck_attr_alloc_init();
-  ioctl_lock = lck_mtx_alloc_init(mp_lock_grp, mp_lock_attr);
+  ioctl_lock = lck_spin_alloc_init(mp_lock_grp, mp_lock_attr);
 
   ret = host_vmxon(FALSE);
   IOLog("host_vmxon: %d\n", ret);
