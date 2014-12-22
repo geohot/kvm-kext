@@ -16,6 +16,8 @@ extern "C" {
 extern int  cpu_number(void);
 }
 
+#include <asm/uapi_vmx.h>
+
 #include <linux/kvm.h>
 #include "kvm_host.h"
 //#include "kvm_cache_regs.h"
@@ -34,6 +36,63 @@ extern const void* guest_entry_point;
 static void vcpu_init();
 
 #include "seg_base.h"
+
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
+//struct vcpu only_cpu;
+
+//#include "vmx.h"
+//#include <linux/kvm_host.h>
+
+
+struct vcpu_arch {
+  unsigned long regs[NR_VCPU_REGS];
+  unsigned long rflags;
+  unsigned long cr2;
+  struct dtr host_gdtr, host_idtr;
+  unsigned short int host_ldtr;
+};
+
+//#define NR_AUTOLOAD_MSRS 8
+
+struct vcpu {
+  vmcs *vmcs;
+  struct kvm_run *kvm_vcpu;
+  struct vcpu_arch arch;
+  unsigned long __launched;
+  unsigned long fail;
+  unsigned long host_rsp;
+} __vcpu;
+
+static void skip_emulated_instruction(struct vcpu *vcpu) {
+  vcpu->arch.regs[VCPU_REGS_RIP] += vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
+}
+
+// TODO: check for RIP and things
+u64 kvm_register_read(struct vcpu *vcpu, int reg) { return vcpu->arch.regs[reg]; }
+void kvm_register_write(struct vcpu *vcpu, int reg, u64 value) { vcpu->arch.regs[reg] = value; }
+
+static int handle_cpuid(struct vcpu *vcpu) {
+	u32 function, eax, ebx, ecx, edx;
+
+	function = eax = kvm_register_read(vcpu, VCPU_REGS_RAX);
+	ecx = kvm_register_read(vcpu, VCPU_REGS_RCX);
+
+  // do cpuid
+
+	kvm_register_write(vcpu, VCPU_REGS_RAX, eax);
+	kvm_register_write(vcpu, VCPU_REGS_RBX, ebx);
+	kvm_register_write(vcpu, VCPU_REGS_RCX, ecx);
+	kvm_register_write(vcpu, VCPU_REGS_RDX, edx);
+
+  skip_emulated_instruction(vcpu);
+  return 1;
+}
+
+static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
+	[EXIT_REASON_CPUID]                   = handle_cpuid,
+};
+
+static const int kvm_vmx_max_exit_handlers = ARRAY_SIZE(kvm_vmx_exit_handlers);
 
 void init_guest_values_from_host() {
   u64 value;
@@ -156,31 +215,6 @@ void init_host_values() {
   // HOST_RSP is set in run
 }
 
-#define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
-//struct vcpu only_cpu;
-
-//#include "vmx.h"
-//#include <linux/kvm_host.h>
-
-
-struct vcpu_arch {
-  unsigned long regs[NR_VCPU_REGS];
-  unsigned long rflags;
-  unsigned long cr2;
-  struct dtr host_gdtr, host_idtr;
-  unsigned short int host_ldtr;
-};
-
-//#define NR_AUTOLOAD_MSRS 8
-
-struct vcpu {
-  vmcs *vmcs;
-  struct kvm_run *kvm_vcpu;
-  struct vcpu_arch arch;
-  unsigned long __launched;
-  unsigned long fail;
-  unsigned long host_rsp;
-} __vcpu;
 
 static void vmcs_load(struct vmcs *vmcs) {
 	u64 phys_addr = __pa(vmcs);
@@ -270,23 +304,15 @@ static void kvm_set_segment(struct vcpu *vcpu, struct kvm_segment *var, int seg)
 }
 
 void kvm_show_regs() {
-  // read them?
-  vcpu->arch.rflags = vmcs_readl(GUEST_RFLAGS);
-  vcpu->arch.regs[VCPU_REGS_RSP] = vmcs_readl(GUEST_RSP);
-  vcpu->arch.regs[VCPU_REGS_RIP] = vmcs_readl(GUEST_RIP);
-
-  printf("eax %08llx ebx %08llx ecx %08llx edx %08llx esi %016llx edi %08llx esp %08llx ebp %08llx eip %08llx rflags %08llx cr0: %lx cr3: %lx cr4: %lx\n",
+  printf("%8lx: eax %08lx ebx %08lx ecx %08lx edx %08lx esi %016lx edi %08lx esp %08lx ebp %08lx eip %08lx rflags %08lx cr0: %lx cr3: %lx cr4: %lx\n",
+    vcpu->kvm_vcpu->exit_reason,
     vcpu->arch.regs[VCPU_REGS_RAX], vcpu->arch.regs[VCPU_REGS_RBX], vcpu->arch.regs[VCPU_REGS_RCX], vcpu->arch.regs[VCPU_REGS_RDX],
     vcpu->arch.regs[VCPU_REGS_RSI], vcpu->arch.regs[VCPU_REGS_RDI], vcpu->arch.regs[VCPU_REGS_RSP], vcpu->arch.regs[VCPU_REGS_RBP],
     vcpu->arch.regs[VCPU_REGS_RIP], vcpu->arch.rflags,
     vmcs_readl(GUEST_CR0),vmcs_readl(GUEST_CR3),vmcs_readl(GUEST_CR4));
 }
 
-void kvm_get_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
-  vcpu->arch.rflags = vmcs_readl(GUEST_RFLAGS);
-  vcpu->arch.regs[VCPU_REGS_RSP] = vmcs_readl(GUEST_RSP);
-  vcpu->arch.regs[VCPU_REGS_RIP] = vmcs_readl(GUEST_RIP);
-
+int kvm_get_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
   kvm_regs->rax = vcpu->arch.regs[VCPU_REGS_RAX]; kvm_regs->rcx = vcpu->arch.regs[VCPU_REGS_RCX];
   kvm_regs->rdx = vcpu->arch.regs[VCPU_REGS_RDX]; kvm_regs->rbx = vcpu->arch.regs[VCPU_REGS_RBX];
   kvm_regs->rsp = vcpu->arch.regs[VCPU_REGS_RSP]; kvm_regs->rbp = vcpu->arch.regs[VCPU_REGS_RBP];
@@ -300,9 +326,11 @@ void kvm_get_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
   kvm_regs->rip = vcpu->arch.regs[VCPU_REGS_RIP];
 
   kvm_regs->rflags = vcpu->arch.rflags;
+
+  return 0;
 }
 
-void kvm_set_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
+int kvm_set_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
   vcpu->arch.regs[VCPU_REGS_RAX] = kvm_regs->rax; vcpu->arch.regs[VCPU_REGS_RCX] = kvm_regs->rcx;
   vcpu->arch.regs[VCPU_REGS_RDX] = kvm_regs->rdx; vcpu->arch.regs[VCPU_REGS_RBX] = kvm_regs->rbx;
   vcpu->arch.regs[VCPU_REGS_RSP] = kvm_regs->rsp; vcpu->arch.regs[VCPU_REGS_RBP] = kvm_regs->rbp;
@@ -317,17 +345,26 @@ void kvm_set_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
   printf("setting rip: %llx\n", kvm_regs->rip);
 
   vcpu->arch.rflags = kvm_regs->rflags;
-
-  // load the backing store
-  vmcs_writel(GUEST_RFLAGS, vcpu->arch.rflags);
-  vmcs_writel(GUEST_RSP, vcpu->arch.regs[VCPU_REGS_RSP]);
-  vmcs_writel(GUEST_RIP, vcpu->arch.regs[VCPU_REGS_RIP]);
+  return 0;
 }
 
-/*void kvm_get_sregs(user_addr_t kvm_sregs_user) {
-  struct kvm_sregs kvm_sregs;
-  copyout(&kvm_sregs, kvm_sregs_user, sizeof(kvm_sregs));
-}*/
+int kvm_get_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
+  sregs->cr0 = vmcs_readl(GUEST_CR0);
+  sregs->cr3 = vmcs_readl(GUEST_CR3);
+  sregs->cr4 = vmcs_readl(GUEST_CR4);
+
+  // TODO: read the segments
+
+  // idtr and gdtr
+  sregs->idt.limit = vmcs_read32(GUEST_IDTR_LIMIT);
+  sregs->idt.base = vmcs_readl(GUEST_IDTR_BASE);
+  sregs->gdt.limit = vmcs_read32(GUEST_GDTR_LIMIT);
+  sregs->gdt.base = vmcs_readl(GUEST_GDTR_BASE);
+
+  sregs->efer = vmcs_readl(GUEST_IA32_EFER);
+
+  return 0;
+}
 
 int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   //return 0;
@@ -359,7 +396,7 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   vmcs_write32(GUEST_GDTR_LIMIT, sregs->gdt.limit);
   vmcs_writel(GUEST_GDTR_BASE, sregs->gdt.base);
 
-  //vmcs_writel(GUEST_IA32_EFER, sregs->efer);
+  vmcs_writel(GUEST_IA32_EFER, sregs->efer);
 
 	return 0;
 }
@@ -385,6 +422,10 @@ void kvm_run(struct vcpu *vcpu) {
     "pop %%rax\n" :"=a"(value));
   printf("rip: %lx\n", value);*/
 
+  // load the backing store
+  vmcs_writel(GUEST_RFLAGS, vcpu->arch.rflags);
+  vmcs_writel(GUEST_RSP, vcpu->arch.regs[VCPU_REGS_RSP]);
+  vmcs_writel(GUEST_RIP, vcpu->arch.regs[VCPU_REGS_RIP]);
 
   asm volatile ("cli\n\t");
   init_host_values();
@@ -506,27 +547,14 @@ void kvm_run(struct vcpu *vcpu) {
     // "rsp", "rbp", "rcx", "rdx"
 		, "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
   );
+  vcpu->__launched = 1;
 
-  
-  vcpu->kvm_vcpu->exit_reason = vmcs_read32(VM_EXIT_REASON);
-
-  unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
-  unsigned int qual = vmcs_read32(EXIT_QUALIFICATION);
-  unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
-  //unsigned long intr = vmcs_read32(VM_EXIT_INTR_INFO);
-  unsigned long host_rsp = vmcs_readl(HOST_RSP);
-  unsigned long host_rip = vmcs_readl(HOST_RIP);
-  unsigned long host_cr3 = vmcs_readl(HOST_CR3);
-  u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
-
-  printf("entry %ld exit %d(0x%x) qual %X error %ld rsp %lx %lx rip %lx %lx phys 0x%llx\n",
-    entry_error, vcpu->kvm_vcpu->exit_reason, vcpu->kvm_vcpu->exit_reason,
-    qual, error, vcpu->host_rsp, host_rsp, host_rip, host_cr3, phys);
-  //printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
-  printf("vmcs: %lx\n", vcpu->vmcs);
+  // read them?
+  vcpu->arch.rflags = vmcs_readl(GUEST_RFLAGS);
+  vcpu->arch.regs[VCPU_REGS_RSP] = vmcs_readl(GUEST_RSP);
+  vcpu->arch.regs[VCPU_REGS_RIP] = vmcs_readl(GUEST_RIP);
 
   //vmcs_clear(vcpu->vmcs);
-
 
   /*asm (
     "mov 0xAAAAAAAA, %%rax\n\t"
@@ -535,7 +563,6 @@ void kvm_run(struct vcpu *vcpu) {
   );*/
 
   // crash controlled
-  //vcpu->__launched = 1;
   //printf("tmp %lx\n", rdmsr64(MSR_IA32_EFER));
 }
 
@@ -785,6 +812,44 @@ static int kvm_get_supported_cpuid(struct kvm_cpuid2 *cpuid) {
   return 0;
 }
 
+static int kvm_run_wrapper(struct vcpu *vcpu) {
+  int maxcont = 0;
+  int cont = 1;
+  unsigned long exit_reason;
+  while (cont && (maxcont++) < 1000) {
+    //kvm_show_regs();
+    kvm_run(vcpu);
+    kvm_show_regs();
+
+    exit_reason = vmcs_read32(VM_EXIT_REASON);
+
+    //printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
+    //printf("vmcs: %lx\n", vcpu->vmcs);
+
+    if (exit_reason < kvm_vmx_max_exit_handlers && kvm_vmx_exit_handlers[exit_reason] != NULL) {
+      cont = kvm_vmx_exit_handlers[exit_reason](vcpu);
+    } else {
+      cont = 0;
+    }
+  }
+  printf("looped %d times\n", maxcont);
+
+  unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
+  unsigned int qual = vmcs_read32(EXIT_QUALIFICATION);
+  unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
+  //unsigned long intr = vmcs_read32(VM_EXIT_INTR_INFO);
+  u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
+
+  printf("entry %ld exit %d(0x%x) qual %X error %ld phys 0x%llx\n",
+    entry_error, exit_reason, exit_reason, qual, error, phys);
+  return 0;
+}
+
+static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
+  printf("got %d cpuids\n", cpuid2->nent);
+  return 0;
+}
+
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   int ret = EOPNOTSUPP;
   int test;
@@ -872,26 +937,19 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
     /* kvm_vcpu_ioctl */
     switch (iCmd) {
       case KVM_GET_REGS:
-        kvm_get_regs(vcpu, (struct kvm_regs *)pData);
-        ret = 0;
+        ret = kvm_get_regs(vcpu, (struct kvm_regs *)pData);
         break;
       case KVM_SET_REGS:
-        kvm_set_regs(vcpu, (struct kvm_regs *)pData);
-        ret = 0;
+        ret = kvm_set_regs(vcpu, (struct kvm_regs *)pData);
         break;
       case KVM_GET_SREGS:
-        //kvm_get_sregs((user_addr_t)pData);
-        ret = 0;
+        ret = kvm_get_sregs(vcpu, (struct kvm_sregs *)pData);
         break;
       case KVM_SET_SREGS:
-        kvm_set_sregs(vcpu, (struct kvm_sregs *)pData);
-        ret = 0;
+        ret = kvm_set_sregs(vcpu, (struct kvm_sregs *)pData);
         break;
       case KVM_RUN:
-        kvm_show_regs();
-        kvm_run(vcpu);
-        kvm_show_regs();
-        ret = 0;
+        ret = kvm_run_wrapper(vcpu);
         break;
       case KVM_MMAP_VCPU:
         md = IOMemoryDescriptor::withAddressRange((mach_vm_address_t)vcpu->kvm_vcpu, PAGE_SIZE, kIODirectionInOut, kernel_task);
@@ -905,7 +963,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
         ret = 0;
         break;
       case KVM_SET_CPUID2:
-        ret = 0;
+        ret = kvm_set_cpuid2(vcpu, (struct kvm_cpuid2 *)pData);
         break;
       default:
         break;
