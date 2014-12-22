@@ -786,6 +786,8 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
   int ret = EOPNOTSUPP;
   int test;
   iCmd &= 0xFFFFFFFF;
+  IOMemoryDescriptor *md;
+  IOMemoryMap *mm;
 
   if (pData == NULL) goto fail;
 
@@ -889,7 +891,10 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
         ret = 0;
         break;
       case KVM_MMAP_VCPU:
-        //*(void *)pData = 
+        md = IOMemoryDescriptor::withAddress(vcpu->kvm_vcpu, PAGE_SIZE, kIODirectionInOut);
+        mm = md->createMappingInTask(current_task(), NULL, kIOMapAnywhere);
+        printf("mmaped at %p\n", getAddress());
+        *(void *)pData = getAddress();
         ret = 0;
         break;
       case KVM_SET_SIGNAL_MASK:
