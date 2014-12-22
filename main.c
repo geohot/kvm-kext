@@ -667,7 +667,7 @@ static void ept_add_page(unsigned long virtual_address, unsigned long physical_a
   int pd_idx = (virtual_address >> 21) & 0x1FF;
   int pt_idx = (virtual_address >> 12) & 0x1FF;
   unsigned long *pdpt, *pd, *pt;
-  //printf("%d %d %d %d\n", pml4_idx, pdpt_idx, pd_idx, pt_idx);
+  printf("%p @ %d %d %d %d\n", virtual_address, pml4_idx, pdpt_idx, pd_idx, pt_idx);
 
   // allocate the pdpt in the pml4 if NULL
   pdpt = (unsigned long*)pml4[PAGE_OFFSET + pml4_idx];
@@ -683,7 +683,7 @@ static void ept_add_page(unsigned long virtual_address, unsigned long physical_a
   if (pd == NULL) {
     pd = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
     bzero(pd, PAGE_SIZE*2);
-    pdpt[PAGE_OFFSET + pd_idx] = (unsigned long)pd;
+    pdpt[PAGE_OFFSET + pdpt_idx] = (unsigned long)pd;
     pdpt[pdpt_idx] = __pa(pd) | EPT_DEFAULTS;
   }
 
@@ -925,9 +925,11 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
   //unsigned long intr_status = vmcs_readl(GUEST_INTR_STATUS);
   u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
 
-  printf("%3d -(%d,%d)- entry %ld exit %d(0x%x) qual %X error %ld phys 0x%llx intr %lx   rip %lx  rsp %lx\n",
-    maxcont, cpun, cpu_number(),
-    entry_error, exit_reason, exit_reason, qual, error, phys, intr, vcpu->arch.regs[VCPU_REGS_RIP], vcpu->arch.regs[VCPU_REGS_RSP]);
+  if (exit_reason != 30) {
+    printf("%3d -(%d,%d)- entry %ld exit %d(0x%x) qual %X error %ld phys 0x%llx intr %lx   rip %lx  rsp %lx\n",
+      maxcont, cpun, cpu_number(),
+      entry_error, exit_reason, exit_reason, qual, error, phys, intr, vcpu->arch.regs[VCPU_REGS_RIP], vcpu->arch.regs[VCPU_REGS_RSP]);
+  }
   return 0;
 }
 
