@@ -1,5 +1,6 @@
 static inline unsigned long vmcs_readl(unsigned long field)
 {
+  if (vmcs_loaded == 0) { printf("ERROR VMCS NOT LOADED\n"); }
 	unsigned long value = 0xBADC0DE;
 	u8 error;
 
@@ -27,6 +28,7 @@ static inline u64 vmcs_read64(unsigned long field)
 
 static void vmcs_writel(unsigned long field, unsigned long value)
 {
+  if (vmcs_loaded == 0) { printf("ERROR VMCS NOT LOADED\n"); }
   //printf("write: %lx <- %lx\n", field, value);
 	u8 error;
 

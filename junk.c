@@ -1,4 +1,85 @@
 
+void init_guest_values_from_host() {
+  u64 value;
+  u16 selector;
+  struct dtr gdtb, idtb;
+
+  vmcs_writel(GUEST_CR0, get_cr0()); 
+  vmcs_writel(GUEST_CR3, get_cr3_raw()); 
+  vmcs_writel(GUEST_CR4, get_cr4());
+
+  u16 sel_value;
+  u32 unusable_ar = 0x10000;
+  u32 usable_ar; 
+  vmcs_write32(GUEST_ES_LIMIT,0xFFFFFFFF); 
+  vmcs_write32(GUEST_DS_LIMIT,0xFFFFFFFF); 
+  vmcs_write32(GUEST_FS_LIMIT,0xFFFFFFFF); 
+  vmcs_write32(GUEST_GS_LIMIT,0xFFFFFFFF); 
+  vmcs_write32(GUEST_LDTR_LIMIT,0); 
+  vmcs_write32(GUEST_SS_LIMIT,0xFFFFFFFF); 
+  vmcs_write32(GUEST_CS_LIMIT,0xFFFFFFFF); 
+
+  vmcs_write32(GUEST_ES_AR_BYTES, unusable_ar);
+  vmcs_write32(GUEST_DS_AR_BYTES, unusable_ar);
+  vmcs_write32(GUEST_FS_AR_BYTES, unusable_ar);
+  vmcs_write32(GUEST_GS_AR_BYTES, unusable_ar);
+  vmcs_write32(GUEST_LDTR_AR_BYTES, unusable_ar);
+
+  asm ("movw %%cs, %%ax\n" : "=a"(sel_value));
+  asm("lar %%eax,%%eax\n" :"=a"(usable_ar) :"a"(sel_value)); 
+  usable_ar = usable_ar>>8;
+  usable_ar &= 0xf0ff; //clear bits 11:8 
+  vmcs_write32(GUEST_CS_AR_BYTES, usable_ar);
+
+  asm ("movw %%ss, %%ax\n" : "=a"(sel_value));
+  asm("lar %%eax,%%eax\n" :"=a"(usable_ar) :"a"(sel_value)); 
+  usable_ar = usable_ar>>8;
+  usable_ar &= 0xf0ff; //clear bits 11:8 
+  vmcs_write32(GUEST_SS_AR_BYTES, usable_ar);
+
+  asm ("movw %%cs, %%ax\n" : "=a"(selector));
+  vmcs_write16(GUEST_CS_SELECTOR, selector);
+  vmcs_write16(GUEST_SS_SELECTOR, get_ss());
+  vmcs_write16(GUEST_DS_SELECTOR, get_ds());
+  vmcs_write16(GUEST_ES_SELECTOR, get_es());
+  vmcs_write16(GUEST_FS_SELECTOR, get_fs());
+  vmcs_write16(GUEST_GS_SELECTOR, get_gs());
+  vmcs_write16(GUEST_TR_SELECTOR, get_tr()); 
+
+  asm("mov $0x40, %rax\n");
+  asm("lsl %%eax, %%eax\n" :"=a"(value));
+  vmcs_write32(GUEST_TR_LIMIT,value); 
+
+  asm("str %%ax\n" : "=a"(sel_value));
+  asm("lar %%eax,%%eax\n" :"=a"(usable_ar) :"a"(sel_value)); 
+  usable_ar = usable_ar>>8;
+  vmcs_write32(GUEST_TR_AR_BYTES, usable_ar);
+
+  vmcs_writel(GUEST_FS_BASE, rdmsr64(MSR_IA32_FS_BASE)); 
+  vmcs_writel(GUEST_GS_BASE, rdmsr64(MSR_IA32_GS_BASE));  // KERNEL_GS_BASE or GS_BASE?
+
+  // HOST_TR_BASE?
+  //printf("get_tr: %X %llx\n", get_tr(), segment_base(get_tr()));
+  vmcs_writel(GUEST_TR_BASE, segment_base(get_tr()));
+
+  asm("sgdt %0\n" : :"m"(gdtb));
+  vmcs_writel(GUEST_GDTR_BASE, gdtb.base);
+  vmcs_writel(GUEST_GDTR_LIMIT, gdtb.limit);
+
+  asm("sidt %0\n" : :"m"(idtb));
+  vmcs_writel(GUEST_IDTR_BASE, gdtb.base);
+  vmcs_writel(GUEST_IDTR_LIMIT, gdtb.limit);
+
+  vmcs_writel(GUEST_SYSENTER_CS, rdmsr64(MSR_IA32_SYSENTER_CS));
+  vmcs_writel(GUEST_SYSENTER_ESP, rdmsr64(MSR_IA32_SYSENTER_ESP));
+  vmcs_writel(GUEST_SYSENTER_EIP, rdmsr64(MSR_IA32_SYSENTER_EIP));
+
+  // PERF_GLOBAL_CTRL, PAT, and EFER are all disabled
+
+  vmcs_writel(GUEST_RIP, (unsigned long)&guest_entry_point);
+  vmcs_writel(GUEST_RSP, 0);
+}
+
 void initialize_naturalwidth_control(void){
   vmcs_write64(CR0_GUEST_HOST_MASK, 0);
   vmcs_write64(CR4_GUEST_HOST_MASK, 0);

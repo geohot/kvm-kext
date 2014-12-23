@@ -16,6 +16,10 @@
 #define VCPU_SIZE (PAGE_SIZE*2)
 #define KVM_PIO_PAGE_OFFSET 1
 
+int vmcs_loaded = 0;
+#define LOAD_VMCS { lck_spin_lock(ioctl_lock); vmcs_load(vcpu->vmcs); vmcs_loaded = 1; }
+#define RELEASE_VMCS { vmcs_clear(vcpu->vmcs); lck_spin_unlock(ioctl_lock); vmcs_loaded = 0; }
+
 extern "C" {
 extern int  cpu_number(void);
 }
@@ -225,14 +229,6 @@ static int handle_ept_violation(struct vcpu *vcpu) {
 }
 
 static int handle_preemption_timer(struct vcpu *vcpu) {
-  vmcs_clear(vcpu->vmcs);
-  vcpu->__launched = 0;
-  lck_spin_unlock(ioctl_lock);
-
-  // yield, can change CPUs
-
-  lck_spin_lock(ioctl_lock);
-  vmcs_load(vcpu->vmcs);
 
   // check for signal to process
   sigset_t tmp;
@@ -256,87 +252,6 @@ static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
 };
 
 static const int kvm_vmx_max_exit_handlers = ARRAY_SIZE(kvm_vmx_exit_handlers);
-
-void init_guest_values_from_host() {
-  u64 value;
-  u16 selector;
-  struct dtr gdtb, idtb;
-
-  vmcs_writel(GUEST_CR0, get_cr0()); 
-  vmcs_writel(GUEST_CR3, get_cr3_raw()); 
-  vmcs_writel(GUEST_CR4, get_cr4());
-
-  u16 sel_value;
-  u32 unusable_ar = 0x10000;
-  u32 usable_ar; 
-  vmcs_write32(GUEST_ES_LIMIT,0xFFFFFFFF); 
-  vmcs_write32(GUEST_DS_LIMIT,0xFFFFFFFF); 
-  vmcs_write32(GUEST_FS_LIMIT,0xFFFFFFFF); 
-  vmcs_write32(GUEST_GS_LIMIT,0xFFFFFFFF); 
-  vmcs_write32(GUEST_LDTR_LIMIT,0); 
-  vmcs_write32(GUEST_SS_LIMIT,0xFFFFFFFF); 
-  vmcs_write32(GUEST_CS_LIMIT,0xFFFFFFFF); 
-
-  vmcs_write32(GUEST_ES_AR_BYTES, unusable_ar);
-  vmcs_write32(GUEST_DS_AR_BYTES, unusable_ar);
-  vmcs_write32(GUEST_FS_AR_BYTES, unusable_ar);
-  vmcs_write32(GUEST_GS_AR_BYTES, unusable_ar);
-  vmcs_write32(GUEST_LDTR_AR_BYTES, unusable_ar);
-
-  asm ("movw %%cs, %%ax\n" : "=a"(sel_value));
-  asm("lar %%eax,%%eax\n" :"=a"(usable_ar) :"a"(sel_value)); 
-  usable_ar = usable_ar>>8;
-  usable_ar &= 0xf0ff; //clear bits 11:8 
-  vmcs_write32(GUEST_CS_AR_BYTES, usable_ar);
-
-  asm ("movw %%ss, %%ax\n" : "=a"(sel_value));
-  asm("lar %%eax,%%eax\n" :"=a"(usable_ar) :"a"(sel_value)); 
-  usable_ar = usable_ar>>8;
-  usable_ar &= 0xf0ff; //clear bits 11:8 
-  vmcs_write32(GUEST_SS_AR_BYTES, usable_ar);
-
-  asm ("movw %%cs, %%ax\n" : "=a"(selector));
-  vmcs_write16(GUEST_CS_SELECTOR, selector);
-  vmcs_write16(GUEST_SS_SELECTOR, get_ss());
-  vmcs_write16(GUEST_DS_SELECTOR, get_ds());
-  vmcs_write16(GUEST_ES_SELECTOR, get_es());
-  vmcs_write16(GUEST_FS_SELECTOR, get_fs());
-  vmcs_write16(GUEST_GS_SELECTOR, get_gs());
-  vmcs_write16(GUEST_TR_SELECTOR, get_tr()); 
-
-  asm("mov $0x40, %rax\n");
-  asm("lsl %%eax, %%eax\n" :"=a"(value));
-  vmcs_write32(GUEST_TR_LIMIT,value); 
-
-  asm("str %%ax\n" : "=a"(sel_value));
-  asm("lar %%eax,%%eax\n" :"=a"(usable_ar) :"a"(sel_value)); 
-  usable_ar = usable_ar>>8;
-  vmcs_write32(GUEST_TR_AR_BYTES, usable_ar);
-
-  vmcs_writel(GUEST_FS_BASE, rdmsr64(MSR_IA32_FS_BASE)); 
-  vmcs_writel(GUEST_GS_BASE, rdmsr64(MSR_IA32_GS_BASE));  // KERNEL_GS_BASE or GS_BASE?
-
-  // HOST_TR_BASE?
-  //printf("get_tr: %X %llx\n", get_tr(), segment_base(get_tr()));
-  vmcs_writel(GUEST_TR_BASE, segment_base(get_tr()));
-
-  asm("sgdt %0\n" : :"m"(gdtb));
-  vmcs_writel(GUEST_GDTR_BASE, gdtb.base);
-  vmcs_writel(GUEST_GDTR_LIMIT, gdtb.limit);
-
-  asm("sidt %0\n" : :"m"(idtb));
-  vmcs_writel(GUEST_IDTR_BASE, gdtb.base);
-  vmcs_writel(GUEST_IDTR_LIMIT, gdtb.limit);
-
-  vmcs_writel(GUEST_SYSENTER_CS, rdmsr64(MSR_IA32_SYSENTER_CS));
-  vmcs_writel(GUEST_SYSENTER_ESP, rdmsr64(MSR_IA32_SYSENTER_ESP));
-  vmcs_writel(GUEST_SYSENTER_EIP, rdmsr64(MSR_IA32_SYSENTER_EIP));
-
-  // PERF_GLOBAL_CTRL, PAT, and EFER are all disabled
-
-  vmcs_writel(GUEST_RIP, (unsigned long)&guest_entry_point);
-  vmcs_writel(GUEST_RSP, 0);
-}
 
 void init_host_values() {
   u16 selector;
@@ -491,6 +406,8 @@ int kvm_set_regs(struct vcpu *vcpu, struct kvm_regs* kvm_regs) {
 }
 
 int kvm_get_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
+  LOAD_VMCS
+
   sregs->cr0 = vmcs_readl(GUEST_CR0);
   sregs->cr3 = vmcs_readl(GUEST_CR3);
   sregs->cr4 = vmcs_readl(GUEST_CR4);
@@ -514,10 +431,13 @@ int kvm_get_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   sregs->efer = vmcs_readl(GUEST_IA32_EFER);
   //sregs->apic_base = vmcs_readl(VIRTUAL_APIC_PAGE_ADDR);
 
+  RELEASE_VMCS
+
   return 0;
 }
 
 int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
+  LOAD_VMCS
   //return 0;
 
   // should check this values?
@@ -548,6 +468,7 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   vmcs_writel(GUEST_GDTR_BASE, sregs->gdt.base);
 
   vmcs_writel(GUEST_IA32_EFER, sregs->efer);
+  RELEASE_VMCS
 
   printf("apic base: %llx\n", sregs->apic_base);
   //vmcs_writel(VIRTUAL_APIC_PAGE_ADDR, sregs->apic_base);
@@ -555,6 +476,8 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
 }
 
 void kvm_run(struct vcpu *vcpu) {
+  LOAD_VMCS
+
   //printf("%x %x %x\n", vmcs_read32(CPU_BASED_VM_EXEC_CONTROL), vmcs_read32(PIN_BASED_VM_EXEC_CONTROL), vmcs_read32(SECONDARY_VM_EXEC_CONTROL));
   //vmcs_writel(GUEST_RSP, &stackk[0x20]);
   //vmcs_writel(GUEST_RIP, &guest_entry_point);
@@ -704,12 +627,16 @@ void kvm_run(struct vcpu *vcpu) {
     // "rsp", "rbp", "rcx", "rdx"
 		, "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"
   );
-  vcpu->__launched = 1;
+  //vcpu->__launched = 1;
+  //vcpu->__launched = 0;
 
   // read them?
   vcpu->arch.rflags = vmcs_readl(GUEST_RFLAGS);
   vcpu->arch.regs[VCPU_REGS_RSP] = vmcs_readl(GUEST_RSP);
   vcpu->arch.regs[VCPU_REGS_RIP] = vmcs_readl(GUEST_RIP);
+
+
+  // yield, can change CPUs
 
   //vmcs_clear(vcpu->vmcs);
 
@@ -721,6 +648,7 @@ void kvm_run(struct vcpu *vcpu) {
 
   // crash controlled
   //printf("tmp %lx\n", rdmsr64(MSR_IA32_EFER));
+  RELEASE_VMCS
 }
 
 
@@ -803,18 +731,22 @@ static void vcpu_init() {
 
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_VMX_PREEMPTION_TIMER);
   vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING |
-    CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_MOV_DR_EXITING);
+    CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_MOV_DR_EXITING |
+    CPU_BASED_INVLPG_EXITING | CPU_BASED_MWAIT_EXITING | CPU_BASED_RDPMC_EXITING | CPU_BASED_RDTSC_EXITING |
+    CPU_BASED_CR8_LOAD_EXITING | CPU_BASED_CR8_STORE_EXITING |
+    CPU_BASED_MONITOR_EXITING | CPU_BASED_PAUSE_EXITING);
     //CPU_BASED_MOV_DR_EXITING | CPU_BASED_VIRTUAL_INTR_PENDING | CPU_BASED_VIRTUAL_NMI_PENDING);
   //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
   //vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT | SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
-  vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
+  vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT |
+    SECONDARY_EXEC_WBINVD_EXITING);
 
   //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING);
   //vmcs_write32(SECONDARY_VM_EXEC_CONTROL, 0);
 
   // better not include PAT, EFER, or PERF_GLOBAL
-  vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR | VM_EXIT_HOST_ADDR_SPACE_SIZE);
-  vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR);
+  vmcs_write32(VM_EXIT_CONTROLS, (VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR | VM_EXIT_HOST_ADDR_SPACE_SIZE) & ~VM_EXIT_SAVE_DEBUG_CONTROLS);
+  vmcs_write32(VM_ENTRY_CONTROLS, (VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR) & ~VM_ENTRY_LOAD_DEBUG_CONTROLS);
   //vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR | VM_ENTRY_IA32E_MODE);
 
   //vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
@@ -938,6 +870,10 @@ static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
 
   // wire in the memory
   IOReturn ret = md->prepare(kIODirectionInOut);
+  if (ret != 0) {
+    printf("wire pages failed :(\n");
+    return EINVAL;
+  }
 
   //printf("%llx\n", md->getLength());
 
@@ -990,29 +926,32 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
 
   unsigned long exit_reason;
   vcpu->kvm_vcpu->exit_reason = 0;
-  while (cont && (maxcont++) < 300) {
+  while (cont && (maxcont++) < 1000) {
     //kvm_show_regs();
     kvm_run(vcpu);
-
-    exit_reason = vmcs_read32(VM_EXIT_REASON);
 
     //printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
     //printf("vmcs: %lx\n", vcpu->vmcs);
 
+
+    LOAD_VMCS
+    exit_reason = vmcs_read32(VM_EXIT_REASON);
     if (exit_reason < kvm_vmx_max_exit_handlers && kvm_vmx_exit_handlers[exit_reason] != NULL) {
       cont = kvm_vmx_exit_handlers[exit_reason](vcpu);
     } else {
       cont = 0;
     }
+    RELEASE_VMCS
   }
   //kvm_show_regs();
 
+  LOAD_VMCS
   unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
   unsigned int qual = vmcs_read32(EXIT_QUALIFICATION);
   unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
   unsigned long intr = vmcs_read32(VM_EXIT_INTR_INFO);
-  //unsigned long intr_status = vmcs_readl(GUEST_INTR_STATUS);
   u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
+  RELEASE_VMCS
 
   if (exit_reason != 30) {
     printf("%3d -(%d,%d)- entry %ld exit %ld(0x%lx) qual %X error %ld phys 0x%llx intr %lx   rip %lx  rsp %lx\n",
@@ -1060,8 +999,6 @@ static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   int ret = EOPNOTSUPP;
   int test;
-
-  lck_spin_lock(ioctl_lock);
 
   iCmd &= 0xFFFFFFFF;
   IOMemoryDescriptor *md;
@@ -1133,9 +1070,12 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
         vcpu->pending_io = 0;
         bzero(vcpu->kvm_vcpu, VCPU_SIZE);
         vmcs_clear(vcpu->vmcs);
+
+        LOAD_VMCS
         vmcs_load(vcpu->vmcs);
         vcpu_init();
         //init_guest_values_from_host();
+        RELEASE_VMCS
         ret = 0;
         break;
       case KVM_SET_USER_MEMORY_REGION:
@@ -1147,9 +1087,6 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
   }
 
   if (vcpu->vmcs != NULL) {
-    // processor issue?
-    vmcs_load(vcpu->vmcs);
-
     /* kvm_vcpu_ioctl */
     switch (iCmd) {
       case KVM_GET_REGS:
@@ -1187,14 +1124,10 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       default:
         break;
     }
-
-    vmcs_clear(vcpu->vmcs);
-    vcpu->__launched = 0;
   }
 
 fail:
   //printf("%d %p get ioctl %lX with pData %p return %d\n", cpu_number(), pProcess, iCmd, pData, ret);
-  lck_spin_unlock(ioctl_lock);
   return ret;
 }
 
@@ -1274,7 +1207,7 @@ extern kern_return_t _stop(kmod_info_t *ki, void *data);
 }
 
 KMOD_EXPLICIT_DECL(com.geohot.virt.kvm, "1.0.0d1", _start, _stop)
-__private_extern__ kmod_start_func_t *_realmain = MyKextStart;
-__private_extern__ kmod_stop_func_t *_antimain = MyKextStop;
-__private_extern__ int _kext_apple_cc = __APPLE_CC__;
+kmod_start_func_t *_realmain = MyKextStart;
+kmod_stop_func_t *_antimain = MyKextStop;
+int _kext_apple_cc = __APPLE_CC__;
 
