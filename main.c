@@ -278,7 +278,7 @@ static int handle_interrupt_window(struct vcpu *vcpu) {
   for (i = 0; i < IRQ_MAX; i++) {
     if (vcpu->pending_irq & (1<<i)) {
       printf("delivering IRQ %d\n", i);
-      vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, INTR_TYPE_EXT_INTR | INTR_INFO_DELIVER_CODE_MASK | INTR_INFO_VALID_MASK | i);
+      vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR | i);
       vcpu->pending_irq &= ~(1<<i);
       break;
     }
@@ -779,7 +779,8 @@ static void vcpu_init() {
 
   //vmcs_writel(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_HLT_EXITING | CPU_BASED_CR3_LOAD_EXITING | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
   //vmcs_writel(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
-  vmcs_write32(EXCEPTION_BITMAP, 0xffffffff);
+  //vmcs_write32(EXCEPTION_BITMAP, 0xffffffff);
+  vmcs_write32(EXCEPTION_BITMAP, 0);
 
   vmcs_writel(EPT_POINTER, __pa(pml4) | (0x03 << 3));
 
@@ -1000,6 +1001,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
 
 
   unsigned long exit_reason;
+  unsigned long error, entry_error, phys;
   vcpu->kvm_vcpu->exit_reason = 0;
   while (cont && (maxcont++) < 1000) {
     LOAD_VMCS
@@ -1007,7 +1009,9 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
     if (vcpu->irq_this_time) {
       vcpu->irq_this_time = 0;
     } else {
+      //vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, 0);
       if (vcpu->pending_irq) {
+        //printf("pending %x\n", vcpu->pending_irq);
         vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, vmcs_read32(CPU_BASED_VM_EXEC_CONTROL) | CPU_BASED_VIRTUAL_INTR_PENDING);
       }
     }
@@ -1025,22 +1029,20 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
     } else {
       cont = 0;
     }
+    error = vmcs_read32(VM_INSTRUCTION_ERROR);
+    entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
+    phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
+
     RELEASE_VMCS
+
+    if (error != 0) break;
   }
   //kvm_show_regs();
 
-  LOAD_VMCS
-  unsigned long entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
-  unsigned int qual = vmcs_read32(EXIT_QUALIFICATION);
-  unsigned long error = vmcs_read32(VM_INSTRUCTION_ERROR);
-  unsigned long intr = vmcs_read32(VM_EXIT_INTR_INFO);
-  u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
-  RELEASE_VMCS
-
   if (exit_reason != 30) {
-    printf("%3d -(%d,%d)- entry %ld exit %ld(0x%lx) qual %X error %ld phys 0x%llx intr %lx   rip %lx  rsp %lx\n",
+    printf("%3d -(%d,%d)- entry %ld exit %ld(0x%lx) error %ld phys 0x%llx    rip %lx  rsp %lx\n",
       maxcont, cpun, cpu_number(),
-      entry_error, exit_reason, exit_reason, qual, error, phys, intr, vcpu->arch.regs[VCPU_REGS_RIP], vcpu->arch.regs[VCPU_REGS_RSP]);
+      entry_error, exit_reason, exit_reason, error, phys, vcpu->arch.regs[VCPU_REGS_RIP], vcpu->arch.regs[VCPU_REGS_RSP]);
   }
   return 0;
 }
@@ -1080,10 +1082,10 @@ static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
 }
 
 static int kvm_irq_line(struct kvm_irq_level *irq) {
-  if (irq->level != 0) printf("irq %d = %d\n", irq->irq, irq->level);
+  //if (irq->level != 0) printf("irq %d = %d\n", irq->irq, irq->level);
   if (irq->irq < IRQ_MAX) {
-    if (vcpu->irq_level[irq->irq] == 1 && irq->level == 0) {
-      // trigger on falling edeg
+    if (vcpu->irq_level[irq->irq] == 0 && irq->level == 1) {
+      // trigger on rising edge?
       vcpu->pending_irq |= 1 << irq->irq;
     }
     vcpu->irq_level[irq->irq] = irq->level;
