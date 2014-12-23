@@ -122,25 +122,43 @@ static int handle_io(struct vcpu *vcpu) {
 }
 
 static int handle_cpuid(struct vcpu *vcpu) {
+  int i;
 	u32 function, eax, ebx, ecx, edx;
 
 	function = eax = kvm_register_read(vcpu, VCPU_REGS_RAX);
 	ecx = kvm_register_read(vcpu, VCPU_REGS_RCX);
 
-  // lol emulate
-  asm(
-      "push %%rbx       \n"
-      "cpuid             \n"
-      "mov  %%rbx, %%rsi\n"
-      "pop  %%rbx       \n"
-    : "=a"   (eax),
-      "=S"   (ebx),
-      "=c"   (ecx),
-      "=d"   (edx)
-    : "a"    (eax),
-      "S"    (ebx),
-      "c"    (ecx),
-      "d"    (edx));
+
+  int found = 0;
+
+  for (i = 0; i < vcpu->cpuid_count; i++) {
+    if (vcpu->cpuids[i].function == function) {
+      eax = vcpu->cpuids[i].eax;
+      ebx = vcpu->cpuids[i].ebx;
+      ecx = vcpu->cpuids[i].ecx;
+      edx = vcpu->cpuids[i].edx;
+      found = 1;
+      break;
+    }
+  }
+
+  if (found == 0) {
+    //printf("MISS cpuid function 0x%x index 0x%x\n", function, ecx);
+    // lol emulate
+    asm(
+        "push %%rbx       \n"
+        "cpuid             \n"
+        "mov  %%rbx, %%rsi\n"
+        "pop  %%rbx       \n"
+      : "=a"   (eax),
+        "=S"   (ebx),
+        "=c"   (ecx),
+        "=d"   (edx)
+      : "a"    (eax),
+        "S"    (ebx),
+        "c"    (ecx),
+        "d"    (edx));
+  }
 
 	kvm_register_write(vcpu, VCPU_REGS_RAX, eax);
 	kvm_register_write(vcpu, VCPU_REGS_RBX, ebx);
@@ -171,11 +189,19 @@ static int handle_wrmsr(struct vcpu *vcpu) {
   return 1;
 }
 
+static int handle_ept_violation(struct vcpu *vcpu) {
+  u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
+  printf("!!ept violation at %llx\n", phys);
+  skip_emulated_instruction(vcpu);
+  return 1;
+}
+
 static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
 	[EXIT_REASON_CPUID]                   = handle_cpuid,
   [EXIT_REASON_IO_INSTRUCTION]          = handle_io,
   [EXIT_REASON_MSR_READ]                = handle_rdmsr,
   [EXIT_REASON_MSR_WRITE]               = handle_wrmsr,
+  [EXIT_REASON_EPT_VIOLATION]           = handle_ept_violation
 };
 
 static const int kvm_vmx_max_exit_handlers = ARRAY_SIZE(kvm_vmx_exit_handlers);
@@ -976,7 +1002,7 @@ static int kvm_set_msrs(struct vcpu *vcpu, struct kvm_msrs *msrs) {
   copyin(msrs->self + offsetof(struct kvm_msrs, entries), vcpu->msrs, vcpu->msr_count * sizeof(struct kvm_msr_entry));
 
   for (i = 0; i < vcpu->msr_count; i++) {
-    printf("  got msr %x = %lx\n", vcpu->msrs[i].index, vcpu->msrs[i].data);
+    printf("  got msr 0x%x = 0x%lx\n", vcpu->msrs[i].index, vcpu->msrs[i].data);
   }
   return 0;
 }
@@ -990,7 +1016,7 @@ static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
   copyin(cpuid2->self + offsetof(struct kvm_cpuid2, entries), vcpu->cpuids, vcpu->cpuid_count * sizeof(struct kvm_cpuid_entry2));
 
   for (i = 0; i < vcpu->cpuid_count; i++) {
-    printf("  got cpuid %x %x\n", vcpu->cpuids[i].function, vcpu->cpuids[i].index);
+    printf("  got cpuid 0x%x 0x%x\n", vcpu->cpuids[i].function, vcpu->cpuids[i].index);
   }
 
   return 0;
