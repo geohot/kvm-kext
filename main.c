@@ -210,14 +210,14 @@ static int handle_rdmsr(struct vcpu *vcpu) {
       "=d"   (vcpu->arch.regs[VCPU_REGS_RDX])
     : "c"    (vcpu->arch.regs[VCPU_REGS_RCX]));*/
 
-  skip_emulated_instruction(vcpu);
-  return 1;
+  //skip_emulated_instruction(vcpu);
+  return 0;
 }
 
 static int handle_wrmsr(struct vcpu *vcpu) {
   printf("wrmsr 0x%lX\n", vcpu->arch.regs[VCPU_REGS_RCX]);
-  skip_emulated_instruction(vcpu);
-  return 1;
+  //skip_emulated_instruction(vcpu);
+  return 0;
 }
 
 static int handle_ept_violation(struct vcpu *vcpu) {
@@ -242,13 +242,28 @@ static int handle_preemption_timer(struct vcpu *vcpu) {
   //return 0;
 }
 
+static int handle_external_interrupt(struct vcpu *vcpu) {
+  return 1;
+}
+
+static int handle_apic_access(struct vcpu *vcpu) {
+  printf("apic access\n");
+  skip_emulated_instruction(vcpu);
+  return 1;
+}
+
+// 0xfed00000 = HPET
+// 0xfee00000 = APIC
+
 static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
+  [EXIT_REASON_EXTERNAL_INTERRUPT]      = handle_external_interrupt,
 	[EXIT_REASON_CPUID]                   = handle_cpuid,
   [EXIT_REASON_IO_INSTRUCTION]          = handle_io,
   [EXIT_REASON_MSR_READ]                = handle_rdmsr,
   [EXIT_REASON_MSR_WRITE]               = handle_wrmsr,
   [EXIT_REASON_EPT_VIOLATION]           = handle_ept_violation,
-  [EXIT_REASON_PREEMPTION_TIMER]        = handle_preemption_timer
+  [EXIT_REASON_PREEMPTION_TIMER]        = handle_preemption_timer,
+  [EXIT_REASON_APIC_ACCESS]             = handle_apic_access,
 };
 
 static const int kvm_vmx_max_exit_handlers = ARRAY_SIZE(kvm_vmx_exit_handlers);
@@ -739,13 +754,16 @@ static void vcpu_init() {
 	bzero(apic_access, PAGE_SIZE);
   vmcs_writel(APIC_ACCESS_ADDR, __pa(apic_access));
 
+  // right?
+  ept_add_page(0xfee00000, __pa(apic_access));
 
-  vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_VMX_PREEMPTION_TIMER);
+  vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_VMX_PREEMPTION_TIMER | PIN_BASED_NMI_EXITING | PIN_BASED_EXT_INTR_MASK);
   vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING |
     CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_MOV_DR_EXITING |
     CPU_BASED_INVLPG_EXITING | CPU_BASED_MWAIT_EXITING | CPU_BASED_RDPMC_EXITING | CPU_BASED_RDTSC_EXITING |
     CPU_BASED_CR8_LOAD_EXITING | CPU_BASED_CR8_STORE_EXITING | CPU_BASED_TPR_SHADOW |
-    CPU_BASED_MONITOR_EXITING | CPU_BASED_PAUSE_EXITING);
+    CPU_BASED_MONITOR_EXITING);
+    //CPU_BASED_MONITOR_EXITING | CPU_BASED_PAUSE_EXITING);
     //CPU_BASED_MOV_DR_EXITING | CPU_BASED_VIRTUAL_INTR_PENDING | CPU_BASED_VIRTUAL_NMI_PENDING);
   //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
   //vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT | SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
