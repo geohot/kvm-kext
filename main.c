@@ -174,10 +174,10 @@ static int handle_rdmsr(struct vcpu *vcpu) {
   /*vcpu->arch.regs[VCPU_REGS_RAX] = 0;
   vcpu->arch.regs[VCPU_REGS_RDX] = 0;*/
 
-  asm("rdmsr\n"
+  /*asm("rdmsr\n"
     : "=a"   (vcpu->arch.regs[VCPU_REGS_RAX]),
       "=d"   (vcpu->arch.regs[VCPU_REGS_RDX])
-    : "c"    (vcpu->arch.regs[VCPU_REGS_RCX]));
+    : "c"    (vcpu->arch.regs[VCPU_REGS_RCX]));*/
 
   skip_emulated_instruction(vcpu);
   return 1;
@@ -553,6 +553,9 @@ void kvm_run(struct vcpu *vcpu) {
   vmcs_writel(GUEST_RSP, vcpu->arch.regs[VCPU_REGS_RSP]);
   vmcs_writel(GUEST_RIP, vcpu->arch.regs[VCPU_REGS_RIP]);
 
+  // TODO: i made this up
+  vmcs_writel(VMX_PREEMPTION_TIMER_VALUE, 0x400000);
+
   asm volatile ("cli\n\t");
   init_host_values();
 
@@ -770,7 +773,7 @@ static void vcpu_init() {
   vmcs_writel(EPT_POINTER, __pa(pml4) | (0x03 << 3));
 
 
-  vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
+  vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_VMX_PREEMPTION_TIMER);
   vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING);
   //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
   vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
