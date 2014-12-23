@@ -219,6 +219,7 @@ static int handle_wrmsr(struct vcpu *vcpu) {
 static int handle_ept_violation(struct vcpu *vcpu) {
   u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
   printf("!!ept violation at %llx\n", phys);
+  //return 0;
   skip_emulated_instruction(vcpu);
   return 1;
 }
@@ -241,8 +242,8 @@ static int handle_preemption_timer(struct vcpu *vcpu) {
     return 0;
   }
 
-  //return 1;
-  return 0;
+  return 1;
+  //return 0;
 }
 
 static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
@@ -445,7 +446,7 @@ static void kvm_set_segment(struct vcpu *vcpu, struct kvm_segment *var, int seg)
 }
 
 void kvm_show_regs() {
-  printf("%8lx: eax %08lx ebx %08lx ecx %08lx edx %08lx esi %016lx edi %08lx esp %08lx ebp %08lx eip %08lx rflags %08lx cr0: %lx cr3: %lx cr4: %lx\n",
+  printf("%8x: eax %08lx ebx %08lx ecx %08lx edx %08lx esi %016lx edi %08lx esp %08lx ebp %08lx eip %08lx rflags %08lx cr0: %lx cr3: %lx cr4: %lx\n",
     vcpu->kvm_vcpu->exit_reason,
     vcpu->arch.regs[VCPU_REGS_RAX], vcpu->arch.regs[VCPU_REGS_RBX], vcpu->arch.regs[VCPU_REGS_RCX], vcpu->arch.regs[VCPU_REGS_RDX],
     vcpu->arch.regs[VCPU_REGS_RSI], vcpu->arch.regs[VCPU_REGS_RDI], vcpu->arch.regs[VCPU_REGS_RSP], vcpu->arch.regs[VCPU_REGS_RBP],
@@ -511,6 +512,7 @@ int kvm_get_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   sregs->gdt.base = vmcs_readl(GUEST_GDTR_BASE);
 
   sregs->efer = vmcs_readl(GUEST_IA32_EFER);
+  //sregs->apic_base = vmcs_readl(VIRTUAL_APIC_PAGE_ADDR);
 
   return 0;
 }
@@ -547,6 +549,8 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
 
   vmcs_writel(GUEST_IA32_EFER, sregs->efer);
 
+  printf("apic base: %llx\n", sregs->apic_base);
+  //vmcs_writel(VIRTUAL_APIC_PAGE_ADDR, sregs->apic_base);
 	return 0;
 }
 
@@ -798,8 +802,11 @@ static void vcpu_init() {
 
 
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_VMX_PREEMPTION_TIMER);
-  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING);
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING |
+    CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_MOV_DR_EXITING);
+    //CPU_BASED_MOV_DR_EXITING | CPU_BASED_VIRTUAL_INTR_PENDING | CPU_BASED_VIRTUAL_NMI_PENDING);
   //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
+  //vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT | SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
   vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
 
   //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING);
@@ -983,7 +990,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
 
   unsigned long exit_reason;
   vcpu->kvm_vcpu->exit_reason = 0;
-  while (cont && (maxcont++) < 1000) {
+  while (cont && (maxcont++) < 300) {
     //kvm_show_regs();
     kvm_run(vcpu);
 
@@ -1022,7 +1029,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
   int msr_count;*/
 
 static int kvm_set_msrs(struct vcpu *vcpu, struct kvm_msrs *msrs) {
-  int i;
+  //int i;
   printf("got %d msrs at %p\n", msrs->nmsrs, msrs);
   vcpu->msr_count = msrs->nmsrs;
   vcpu->msrs = (struct kvm_msr_entry *)IOMalloc(vcpu->msr_count * sizeof(struct kvm_msr_entry));
@@ -1035,7 +1042,7 @@ static int kvm_set_msrs(struct vcpu *vcpu, struct kvm_msrs *msrs) {
 }
 
 static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
-  int i;
+  //int i;
   printf("got %d cpuids at %p\n", cpuid2->nent, cpuid2);
 
   vcpu->cpuid_count = cpuid2->nent;
