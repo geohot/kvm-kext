@@ -49,6 +49,7 @@ static void vcpu_init();
 
 #include <sys/kernel.h>
 #include <kern/locks.h>
+#include <signal.h>
 
 /* using a spinlock here seems to fix the problem of the thread
    being migrated to a different CPU while i'm working */
@@ -79,6 +80,32 @@ struct vcpu {
   int cpuid_count;
   int msr_count;
 } __vcpu;
+
+static void vmcs_load(struct vmcs *vmcs) {
+	u64 phys_addr = __pa(vmcs);
+	u8 error;
+
+	asm volatile (__ex(ASM_VMX_VMPTRLD_RAX) "; setna %0"
+			: "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
+			: "cc", "memory");
+	if (error)
+		printf("kvm: vmptrld %p/%llx failed\n", vmcs, phys_addr);
+}
+
+
+static void vmcs_clear(struct vmcs *vmcs) {
+	u64 phys_addr = __pa(vmcs);
+	u8 error;
+
+	asm volatile (__ex(ASM_VMX_VMCLEAR_RAX) "; setna %0"
+		      : "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
+		      : "cc", "memory");
+	if (error)
+		printf("kvm: vmclear fail: %p/%llx\n", vmcs, phys_addr);
+}
+
+
+struct vcpu *vcpu = &__vcpu;
 
 static void skip_emulated_instruction(struct vcpu *vcpu) {
   vcpu->arch.regs[VCPU_REGS_RIP] += vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
@@ -196,12 +223,31 @@ static int handle_ept_violation(struct vcpu *vcpu) {
   return 1;
 }
 
+static int handle_preemption_timer(struct vcpu *vcpu) {
+  vmcs_clear(vcpu->vmcs);
+  vcpu->__launched = 0;
+  lck_spin_unlock(ioctl_lock);
+
+  // yield, can change CPUs
+
+  lck_spin_lock(ioctl_lock);
+  vmcs_load(vcpu->vmcs);
+
+  // check for signal to process
+  sigset_t tmp;
+  sigfillset(&tmp);
+  if (proc_issignal(proc_selfpid(), tmp)) return 0;
+
+  return 1;
+}
+
 static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
 	[EXIT_REASON_CPUID]                   = handle_cpuid,
   [EXIT_REASON_IO_INSTRUCTION]          = handle_io,
   [EXIT_REASON_MSR_READ]                = handle_rdmsr,
   [EXIT_REASON_MSR_WRITE]               = handle_wrmsr,
-  [EXIT_REASON_EPT_VIOLATION]           = handle_ept_violation
+  [EXIT_REASON_EPT_VIOLATION]           = handle_ept_violation,
+  [EXIT_REASON_PREEMPTION_TIMER]        = handle_preemption_timer
 };
 
 static const int kvm_vmx_max_exit_handlers = ARRAY_SIZE(kvm_vmx_exit_handlers);
@@ -327,32 +373,6 @@ void init_host_values() {
   // HOST_RSP is set in run
 }
 
-
-static void vmcs_load(struct vmcs *vmcs) {
-	u64 phys_addr = __pa(vmcs);
-	u8 error;
-
-	asm volatile (__ex(ASM_VMX_VMPTRLD_RAX) "; setna %0"
-			: "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
-			: "cc", "memory");
-	if (error)
-		printf("kvm: vmptrld %p/%llx failed\n", vmcs, phys_addr);
-}
-
-
-static void vmcs_clear(struct vmcs *vmcs) {
-	u64 phys_addr = __pa(vmcs);
-	u8 error;
-
-	asm volatile (__ex(ASM_VMX_VMCLEAR_RAX) "; setna %0"
-		      : "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
-		      : "cc", "memory");
-	if (error)
-		printf("kvm: vmclear fail: %p/%llx\n", vmcs, phys_addr);
-}
-
-
-struct vcpu *vcpu = &__vcpu;
 
 static int kvm_dev_open(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
   return 0;
@@ -553,8 +573,8 @@ void kvm_run(struct vcpu *vcpu) {
   vmcs_writel(GUEST_RSP, vcpu->arch.regs[VCPU_REGS_RSP]);
   vmcs_writel(GUEST_RIP, vcpu->arch.regs[VCPU_REGS_RIP]);
 
-  // TODO: i made this up
-  vmcs_writel(VMX_PREEMPTION_TIMER_VALUE, 0x400000);
+  // TODO: i made this value up
+  vmcs_writel(VMX_PREEMPTION_TIMER_VALUE, 0x10000);
 
   asm volatile ("cli\n\t");
   init_host_values();
