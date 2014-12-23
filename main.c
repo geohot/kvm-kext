@@ -888,6 +888,18 @@ static void vcpu_init() {
 
 #include <kern/task.h>
 
+static inline void __invept(int ext, u64 eptp, gpa_t gpa) {
+  struct {
+    u64 eptp, gpa; 
+  } operand = {eptp, gpa};
+
+  asm volatile (__ex(ASM_VMX_INVEPT)
+      /* CF==1 or ZF==1 --> rc = -1 */
+      "; ja 1f ; ud2 ; 1:\n"
+      : : "a" (&operand), "c" (ext) : "cc", "memory");
+}
+
+
 static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
   // check alignment
   unsigned long off;
@@ -929,6 +941,10 @@ static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
       return EINVAL;
     }
   }
+
+  // all the pages go bye bye?
+  __invept(VMX_EPT_EXTENT_GLOBAL, 0, 0);
+
   return 0;
 }
 
