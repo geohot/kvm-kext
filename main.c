@@ -82,7 +82,8 @@ struct vcpu {
   int pending_io;
 
   int irq_level[IRQ_MAX];
-  int pending_irq[IRQ_MAX];
+  int pending_irq;
+  int irq_this_time;
 
   struct kvm_cpuid_entry2 *cpuids;
   struct kvm_msr_entry *msrs;
@@ -271,6 +272,24 @@ static int handle_apic_access(struct vcpu *vcpu) {
   return 1;
 }
 
+static int handle_interrupt_window(struct vcpu *vcpu) {
+  int i;
+  // interrupt injection?
+  for (i = 0; i < IRQ_MAX; i++) {
+    if (vcpu->pending_irq & (1<<i)) {
+      printf("delivering IRQ %d\n", i);
+      vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, INTR_TYPE_EXT_INTR | INTR_INFO_DELIVER_CODE_MASK | INTR_INFO_VALID_MASK | i);
+      vcpu->pending_irq &= ~(1<<i);
+      break;
+    }
+  }
+  vcpu->irq_this_time = 1;
+
+  // clear interrupt
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, vmcs_read32(CPU_BASED_VM_EXEC_CONTROL) & ~CPU_BASED_VIRTUAL_INTR_PENDING);
+  return 1;
+}
+
 // 0xfed00000 = HPET
 // 0xfee00000 = APIC
 
@@ -283,6 +302,8 @@ static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
   [EXIT_REASON_EPT_VIOLATION]           = handle_ept_violation,
   [EXIT_REASON_PREEMPTION_TIMER]        = handle_preemption_timer,
   [EXIT_REASON_APIC_ACCESS]             = handle_apic_access,
+  [EXIT_REASON_APIC_ACCESS]             = handle_apic_access,
+  [EXIT_REASON_PENDING_INTERRUPT]       = handle_interrupt_window,
 };
 
 static const int kvm_vmx_max_exit_handlers = ARRAY_SIZE(kvm_vmx_exit_handlers);
@@ -983,13 +1004,11 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
   while (cont && (maxcont++) < 1000) {
     LOAD_VMCS
 
-    // interrupt injection?
-    vmcx_write32(VM_ENTRY_INTR_INFO_FIELD, 0);
-    for (i = 0; i < IRQ_MAX; i++) {
-      if (vcpu->pending_irq[i]) {
-        vmcx_write32(VM_ENTRY_INTR_INFO_FIELD, INTR_TYPE_EXT_INTR | INTR_INFO_DELIVER_CODE_MASK | INTR_INFO_VALID_MASK | i);
-        vcpu->pending_irq[i] = 0;
-        break;
+    if (vcpu->irq_this_time) {
+      vcpu->irq_this_time = 0;
+    } else {
+      if (vcpu->pending_irq) {
+        vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, vmcs_read32(CPU_BASED_VM_EXEC_CONTROL) | CPU_BASED_VIRTUAL_INTR_PENDING);
       }
     }
 
@@ -1065,7 +1084,7 @@ static int kvm_irq_line(struct kvm_irq_level *irq) {
   if (irq->irq < IRQ_MAX) {
     if (vcpu->irq_level[irq->irq] == 1 && irq->level == 0) {
       // trigger on falling edeg
-      vcpu->pending_irq[irq->irq] = 1;
+      vcpu->pending_irq |= 1 << irq->irq;
     }
     vcpu->irq_level[irq->irq] = irq->level;
   }
