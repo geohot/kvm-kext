@@ -70,6 +70,8 @@ struct vcpu_arch {
 
 //#define NR_AUTOLOAD_MSRS 8
 
+#define IRQ_MAX 16
+
 struct vcpu {
   vmcs *vmcs;
   struct kvm_run *kvm_vcpu;
@@ -78,6 +80,9 @@ struct vcpu {
   unsigned long fail;
   unsigned long host_rsp;
   int pending_io;
+
+  int irq_level[IRQ_MAX];
+  int pending_irq[IRQ_MAX];
 
   struct kvm_cpuid_entry2 *cpuids;
   struct kvm_msr_entry *msrs;
@@ -107,6 +112,19 @@ static void vmcs_clear(struct vmcs *vmcs) {
 	if (error)
 		printf("kvm: vmclear fail: %p/%llx\n", vmcs, phys_addr);
 }
+
+typedef u64            gpa_t;
+static inline void __invept(int ext, u64 eptp, gpa_t gpa) {
+  struct {
+    u64 eptp, gpa; 
+  } operand = {eptp, gpa};
+
+  asm volatile (__ex(ASM_VMX_INVEPT)
+      /* CF==1 or ZF==1 --> rc = -1 */
+      "; ja 1f ; ud2 ; 1:\n"
+      : : "a" (&operand), "c" (ext) : "cc", "memory");
+}
+
 
 
 struct vcpu *vcpu = &__vcpu;
@@ -248,6 +266,7 @@ static int handle_external_interrupt(struct vcpu *vcpu) {
 
 static int handle_apic_access(struct vcpu *vcpu) {
   printf("apic access\n");
+  // TODO: maybe actually do something here?
   skip_emulated_instruction(vcpu);
   return 1;
 }
@@ -491,7 +510,8 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
 }
 
 void kvm_run(struct vcpu *vcpu) {
-  LOAD_VMCS
+  // all the pages go bye bye?
+  __invept(VMX_EPT_EXTENT_GLOBAL, 0, 0);
 
   //printf("%x %x %x\n", vmcs_read32(CPU_BASED_VM_EXEC_CONTROL), vmcs_read32(PIN_BASED_VM_EXEC_CONTROL), vmcs_read32(SECONDARY_VM_EXEC_CONTROL));
   //vmcs_writel(GUEST_RSP, &stackk[0x20]);
@@ -663,7 +683,6 @@ void kvm_run(struct vcpu *vcpu) {
 
   // crash controlled
   //printf("tmp %lx\n", rdmsr64(MSR_IA32_EFER));
-  RELEASE_VMCS
 }
 
 
@@ -762,12 +781,17 @@ static void vcpu_init() {
     CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_MOV_DR_EXITING |
     CPU_BASED_INVLPG_EXITING | CPU_BASED_MWAIT_EXITING | CPU_BASED_RDPMC_EXITING | CPU_BASED_RDTSC_EXITING |
     CPU_BASED_CR8_LOAD_EXITING | CPU_BASED_CR8_STORE_EXITING | CPU_BASED_TPR_SHADOW |
+    //CPU_BASED_VIRTUAL_INTR_PENDING | 
     CPU_BASED_MONITOR_EXITING);
     //CPU_BASED_MONITOR_EXITING | CPU_BASED_PAUSE_EXITING);
     //CPU_BASED_MOV_DR_EXITING | CPU_BASED_VIRTUAL_INTR_PENDING | CPU_BASED_VIRTUAL_NMI_PENDING);
   //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
   //vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT | SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
-  vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT | SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
+  vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT |
+    SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES | 
+    0);
+    //SECONDARY_EXEC_APIC_REGISTER_VIRT | SECONDARY_EXEC_VIRTUAL_INTR_DELIVERY);
+    //SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
 
   //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING);
   //vmcs_write32(SECONDARY_VM_EXEC_CONTROL, 0);
@@ -888,17 +912,6 @@ static void vcpu_init() {
 
 #include <kern/task.h>
 
-static inline void __invept(int ext, u64 eptp, gpa_t gpa) {
-  struct {
-    u64 eptp, gpa; 
-  } operand = {eptp, gpa};
-
-  asm volatile (__ex(ASM_VMX_INVEPT)
-      /* CF==1 or ZF==1 --> rc = -1 */
-      "; ja 1f ; ud2 ; 1:\n"
-      : : "a" (&operand), "c" (ext) : "cc", "memory");
-}
-
 
 static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
   // check alignment
@@ -942,9 +955,6 @@ static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
     }
   }
 
-  // all the pages go bye bye?
-  __invept(VMX_EPT_EXTENT_GLOBAL, 0, 0);
-
   return 0;
 }
 
@@ -958,6 +968,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
   int cpun = cpu_number();
   int maxcont = 0;
   int cont = 1;
+  int i;
   unsigned long val = 0;
 
   if (vcpu->pending_io) {
@@ -966,9 +977,22 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
     vcpu->pending_io = 0;
   }
 
+
   unsigned long exit_reason;
   vcpu->kvm_vcpu->exit_reason = 0;
   while (cont && (maxcont++) < 1000) {
+    LOAD_VMCS
+
+    // interrupt injection?
+    vmcx_write32(VM_ENTRY_INTR_INFO_FIELD, 0);
+    for (i = 0; i < IRQ_MAX; i++) {
+      if (vcpu->pending_irq[i]) {
+        vmcx_write32(VM_ENTRY_INTR_INFO_FIELD, INTR_TYPE_EXT_INTR | INTR_INFO_DELIVER_CODE_MASK | INTR_INFO_VALID_MASK | i);
+        vcpu->pending_irq[i] = 0;
+        break;
+      }
+    }
+
     //kvm_show_regs();
     kvm_run(vcpu);
 
@@ -976,7 +1000,6 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
     //printf("vmcs: %lx\n", vcpu->vmcs);
 
 
-    LOAD_VMCS
     exit_reason = vmcs_read32(VM_EXIT_REASON);
     if (exit_reason < kvm_vmx_max_exit_handlers && kvm_vmx_exit_handlers[exit_reason] != NULL) {
       cont = kvm_vmx_exit_handlers[exit_reason](vcpu);
@@ -1037,6 +1060,17 @@ static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
   return 0;
 }
 
+static int kvm_irq_line(struct kvm_irq_level *irq) {
+  if (irq->level != 0) printf("irq %d = %d\n", irq->irq, irq->level);
+  if (irq->irq < IRQ_MAX) {
+    if (vcpu->irq_level[irq->irq] == 1 && irq->level == 0) {
+      // trigger on falling edeg
+      vcpu->pending_irq[irq->irq] = 1;
+    }
+    vcpu->irq_level[irq->irq] = irq->level;
+  }
+  return 0;
+}
 
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   int ret = EOPNOTSUPP;
@@ -1092,6 +1126,9 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       break;
     case KVM_CREATE_IRQCHIP:
       ret = 0;
+      break;
+    case KVM_IRQ_LINE:
+      ret = kvm_irq_line((struct kvm_irq_level *)pData);
       break;
     default:
       break;
