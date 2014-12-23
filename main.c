@@ -83,7 +83,6 @@ struct vcpu {
 
   int irq_level[IRQ_MAX];
   int pending_irq;
-  int irq_this_time;
 
   struct kvm_cpuid_entry2 *cpuids;
   struct kvm_msr_entry *msrs;
@@ -262,6 +261,7 @@ static int handle_preemption_timer(struct vcpu *vcpu) {
 }
 
 static int handle_external_interrupt(struct vcpu *vcpu) {
+  // should really handle it, this was the bugfix?
   return 1;
 }
 
@@ -273,20 +273,6 @@ static int handle_apic_access(struct vcpu *vcpu) {
 }
 
 static int handle_interrupt_window(struct vcpu *vcpu) {
-  int i;
-  // interrupt injection?
-  for (i = 0; i < IRQ_MAX; i++) {
-    if (vcpu->pending_irq & (1<<i)) {
-      printf("delivering IRQ %d\n", i);
-      vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR | i);
-      vcpu->pending_irq &= ~(1<<i);
-      break;
-    }
-  }
-  vcpu->irq_this_time = 1;
-
-  // clear interrupt
-  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, vmcs_read32(CPU_BASED_VM_EXEC_CONTROL) & ~CPU_BASED_VIRTUAL_INTR_PENDING);
   return 1;
 }
 
@@ -779,8 +765,8 @@ static void vcpu_init() {
 
   //vmcs_writel(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_HLT_EXITING | CPU_BASED_CR3_LOAD_EXITING | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
   //vmcs_writel(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
-  //vmcs_write32(EXCEPTION_BITMAP, 0xffffffff);
-  vmcs_write32(EXCEPTION_BITMAP, 0);
+  vmcs_write32(EXCEPTION_BITMAP, 0xffffffff);
+  //vmcs_write32(EXCEPTION_BITMAP, 0);
 
   vmcs_writel(EPT_POINTER, __pa(pml4) | (0x03 << 3));
 
@@ -799,19 +785,19 @@ static void vcpu_init() {
   ept_add_page(0xfee00000, __pa(apic_access));
 
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_VMX_PREEMPTION_TIMER | PIN_BASED_NMI_EXITING | PIN_BASED_EXT_INTR_MASK);
-  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING |
-    CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_MOV_DR_EXITING |
-    CPU_BASED_INVLPG_EXITING | CPU_BASED_MWAIT_EXITING | CPU_BASED_RDPMC_EXITING | CPU_BASED_RDTSC_EXITING |
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_TPR_SHADOW |
+    CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_MOV_DR_EXITING);
+
+    /*CPU_BASED_INVLPG_EXITING | CPU_BASED_MWAIT_EXITING | CPU_BASED_RDPMC_EXITING | CPU_BASED_RDTSC_EXITING |
+    //CPU_BASED_CR8_LOAD_EXITING | CPU_BASED_CR8_STORE_EXITING | CPU_BASED_TPR_SHADOW |
     CPU_BASED_CR8_LOAD_EXITING | CPU_BASED_CR8_STORE_EXITING | CPU_BASED_TPR_SHADOW |
     //CPU_BASED_VIRTUAL_INTR_PENDING | 
-    CPU_BASED_MONITOR_EXITING);
+    CPU_BASED_MONITOR_EXITING);*/
     //CPU_BASED_MONITOR_EXITING | CPU_BASED_PAUSE_EXITING);
     //CPU_BASED_MOV_DR_EXITING | CPU_BASED_VIRTUAL_INTR_PENDING | CPU_BASED_VIRTUAL_NMI_PENDING);
   //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
   //vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT | SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
-  vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT |
-    SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES | 
-    0);
+  vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT | SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
     //SECONDARY_EXEC_APIC_REGISTER_VIRT | SECONDARY_EXEC_VIRTUAL_INTR_DELIVERY);
     //SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
 
@@ -1000,20 +986,31 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
   }
 
 
-  unsigned long exit_reason;
+  unsigned long exit_reason = 0;
   unsigned long error, entry_error, phys;
   vcpu->kvm_vcpu->exit_reason = 0;
   while (cont && (maxcont++) < 1000) {
     LOAD_VMCS
 
-    if (vcpu->irq_this_time) {
-      vcpu->irq_this_time = 0;
-    } else {
-      //vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, 0);
-      if (vcpu->pending_irq) {
-        //printf("pending %x\n", vcpu->pending_irq);
-        vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, vmcs_read32(CPU_BASED_VM_EXEC_CONTROL) | CPU_BASED_VIRTUAL_INTR_PENDING);
+    if (exit_reason == EXIT_REASON_PENDING_INTERRUPT) {
+      // interrupt injection?
+      for (i = 0; i < IRQ_MAX; i++) {
+        if (vcpu->pending_irq & (1<<i)) {
+          printf("delivering IRQ %d : %x\n", i, vmcs_read32(VM_ENTRY_INTR_INFO_FIELD));
+          // vm exits clear the valid bit, no need to do by hand
+          vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR | i);
+          vcpu->pending_irq &= ~(1<<i);
+          break;
+        }
       }
+    }
+    
+    if (vcpu->pending_irq) {
+      // set interrupt pending
+      vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, vmcs_read32(CPU_BASED_VM_EXEC_CONTROL) | CPU_BASED_VIRTUAL_INTR_PENDING);
+    } else {
+      // clear interrupt pending
+      vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, vmcs_read32(CPU_BASED_VM_EXEC_CONTROL) & ~CPU_BASED_VIRTUAL_INTR_PENDING);
     }
 
     //kvm_show_regs();
