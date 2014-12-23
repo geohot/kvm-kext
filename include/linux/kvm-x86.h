@@ -174,6 +174,7 @@ struct kvm_msr_entry {
 
 /* for KVM_GET_MSRS and KVM_SET_MSRS */
 struct kvm_msrs {
+  __u64 self;
 	__u32 nmsrs; /* number of msrs in entries */
 	__u32 pad;
 
@@ -182,6 +183,7 @@ struct kvm_msrs {
 
 /* for KVM_GET_MSR_INDEX_LIST */
 struct kvm_msr_list {
+  __u64 self;
 	__u32 nmsrs; /* number of msrs in entries */
 	__u32 indices[0];
 };
@@ -198,6 +200,7 @@ struct kvm_cpuid_entry {
 
 /* for KVM_SET_CPUID */
 struct kvm_cpuid {
+  __u64 self;
 	__u32 nent;
 	__u32 padding;
 	struct kvm_cpuid_entry entries[0];
@@ -220,6 +223,7 @@ struct kvm_cpuid_entry2 {
 
 /* for KVM_SET_CPUID2 */
 struct kvm_cpuid2 {
+	__u64 self;
 	__u32 nent;
 	__u32 padding;
 	struct kvm_cpuid_entry2 entries[0];

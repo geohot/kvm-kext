@@ -73,6 +73,11 @@ struct vcpu {
   unsigned long fail;
   unsigned long host_rsp;
   int pending_io;
+
+  struct kvm_cpuid_entry2 *cpuids;
+  struct kvm_msr_entry *msrs;
+  int cpuid_count;
+  int msr_count;
 } __vcpu;
 
 static void skip_emulated_instruction(struct vcpu *vcpu) {
@@ -147,13 +152,21 @@ static int handle_cpuid(struct vcpu *vcpu) {
 }
 
 static int handle_rdmsr(struct vcpu *vcpu) {
-  printf("rdmsr %lx\n", vcpu->arch.regs[VCPU_REGS_RCX]);
+  printf("rdmsr 0x%lX\n", vcpu->arch.regs[VCPU_REGS_RCX]);
+  /*vcpu->arch.regs[VCPU_REGS_RAX] = 0;
+  vcpu->arch.regs[VCPU_REGS_RDX] = 0;*/
+
+  asm("rdmsr\n"
+    : "=a"   (vcpu->arch.regs[VCPU_REGS_RAX]),
+      "=d"   (vcpu->arch.regs[VCPU_REGS_RDX])
+    : "c"    (vcpu->arch.regs[VCPU_REGS_RCX]));
+
   skip_emulated_instruction(vcpu);
   return 1;
 }
 
 static int handle_wrmsr(struct vcpu *vcpu) {
-  printf("wrmsr %lx\n", vcpu->arch.regs[VCPU_REGS_RCX]);
+  printf("wrmsr 0x%lX\n", vcpu->arch.regs[VCPU_REGS_RCX]);
   skip_emulated_instruction(vcpu);
   return 1;
 }
@@ -948,12 +961,37 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
   }
   return 0;
 }
+
+/*
+  struct kvm_cpuid_entry2 *cpuids;
+  struct kvm_msr_entry *msrs;
+  int cpuid_count;
+  int msr_count;*/
+
 static int kvm_set_msrs(struct vcpu *vcpu, struct kvm_msrs *msrs) {
+  int i;
   printf("got %d msrs at %p\n", msrs->nmsrs, msrs);
+  vcpu->msr_count = msrs->nmsrs;
+  vcpu->msrs = (struct kvm_msr_entry *)IOMalloc(vcpu->msr_count * sizeof(struct kvm_msr_entry));
+  copyin(msrs->self + offsetof(struct kvm_msrs, entries), vcpu->msrs, vcpu->msr_count * sizeof(struct kvm_msr_entry));
+
+  for (i = 0; i < vcpu->msr_count; i++) {
+    printf("  got msr %x = %lx\n", vcpu->msrs[i].index, vcpu->msrs[i].data);
+  }
+  return 0;
 }
 
 static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
+  int i;
   printf("got %d cpuids at %p\n", cpuid2->nent, cpuid2);
+
+  vcpu->cpuid_count = cpuid2->nent;
+  vcpu->cpuids = (struct kvm_cpuid_entry2*)IOMalloc(vcpu->cpuid_count * sizeof(struct kvm_cpuid_entry2));
+  copyin(cpuid2->self + offsetof(struct kvm_cpuid2, entries), vcpu->cpuids, vcpu->cpuid_count * sizeof(struct kvm_cpuid_entry2));
+
+  for (i = 0; i < vcpu->cpuid_count; i++) {
+    printf("  got cpuid %x %x\n", vcpu->cpuids[i].function, vcpu->cpuids[i].index);
+  }
 
   return 0;
 }
