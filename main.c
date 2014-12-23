@@ -236,9 +236,13 @@ static int handle_preemption_timer(struct vcpu *vcpu) {
   // check for signal to process
   sigset_t tmp;
   sigfillset(&tmp);
-  if (proc_issignal(proc_selfpid(), tmp)) return 0;
+  if (proc_issignal(proc_selfpid(), tmp)) {
+    printf("got signal\n");
+    return 0;
+  }
 
-  return 1;
+  //return 1;
+  return 0;
 }
 
 static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
@@ -515,9 +519,9 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   //return 0;
 
   // should check this values?
-  printf("cr0 %lx %lx\n", sregs->cr0, vmcs_readl(GUEST_CR0));
+  /*printf("cr0 %lx %lx\n", sregs->cr0, vmcs_readl(GUEST_CR0));
   printf("cr3 %lx %lx\n", sregs->cr3, vmcs_readl(GUEST_CR3));
-  printf("cr4 %lx %lx\n", sregs->cr4, vmcs_readl(GUEST_CR4));
+  printf("cr4 %lx %lx\n", sregs->cr4, vmcs_readl(GUEST_CR4));*/
 
   vmcs_writel(GUEST_CR0, sregs->cr0 | 0x20);
   vmcs_writel(GUEST_CR3, sregs->cr3);
@@ -923,7 +927,7 @@ static int kvm_set_user_memory_region(struct kvm_userspace_memory_region *mr) {
   // check alignment
   unsigned long off;
   IOMemoryDescriptor *md = IOMemoryDescriptor::withAddressRange(mr->userspace_addr, mr->memory_size, kIODirectionInOut, current_task());
-  DEBUG("MAPPING %p WITH FLAGS %x SLOT %d IN GUEST AT %p-%p\n", mr->userspace_addr, mr->flags, mr->slot, mr->guest_phys_addr, mr->guest_phys_addr + mr->memory_size);
+  DEBUG("MAPPING 0x%llx WITH FLAGS %x SLOT %d IN GUEST AT 0x%llx-0x%llx\n", mr->userspace_addr, mr->flags, mr->slot, mr->guest_phys_addr, mr->guest_phys_addr + mr->memory_size);
 
   // wire in the memory
   IOReturn ret = md->prepare(kIODirectionInOut);
@@ -1004,7 +1008,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
   u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
 
   if (exit_reason != 30) {
-    printf("%3d -(%d,%d)- entry %ld exit %d(0x%x) qual %X error %ld phys 0x%llx intr %lx   rip %lx  rsp %lx\n",
+    printf("%3d -(%d,%d)- entry %ld exit %ld(0x%lx) qual %X error %ld phys 0x%llx intr %lx   rip %lx  rsp %lx\n",
       maxcont, cpun, cpu_number(),
       entry_error, exit_reason, exit_reason, qual, error, phys, intr, vcpu->arch.regs[VCPU_REGS_RIP], vcpu->arch.regs[VCPU_REGS_RSP]);
   }
@@ -1024,9 +1028,9 @@ static int kvm_set_msrs(struct vcpu *vcpu, struct kvm_msrs *msrs) {
   vcpu->msrs = (struct kvm_msr_entry *)IOMalloc(vcpu->msr_count * sizeof(struct kvm_msr_entry));
   copyin(msrs->self + offsetof(struct kvm_msrs, entries), vcpu->msrs, vcpu->msr_count * sizeof(struct kvm_msr_entry));
 
-  for (i = 0; i < vcpu->msr_count; i++) {
+  /*for (i = 0; i < vcpu->msr_count; i++) {
     printf("  got msr 0x%x = 0x%lx\n", vcpu->msrs[i].index, vcpu->msrs[i].data);
-  }
+  }*/
   return 0;
 }
 
@@ -1038,9 +1042,9 @@ static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
   vcpu->cpuids = (struct kvm_cpuid_entry2*)IOMalloc(vcpu->cpuid_count * sizeof(struct kvm_cpuid_entry2));
   copyin(cpuid2->self + offsetof(struct kvm_cpuid2, entries), vcpu->cpuids, vcpu->cpuid_count * sizeof(struct kvm_cpuid_entry2));
 
-  for (i = 0; i < vcpu->cpuid_count; i++) {
+  /*for (i = 0; i < vcpu->cpuid_count; i++) {
     printf("  got cpuid 0x%x 0x%x\n", vcpu->cpuids[i].function, vcpu->cpuids[i].index);
-  }
+  }*/
 
   return 0;
 }
@@ -1159,7 +1163,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       case KVM_MMAP_VCPU:
         md = IOMemoryDescriptor::withAddressRange((mach_vm_address_t)vcpu->kvm_vcpu, VCPU_SIZE, kIODirectionInOut, kernel_task);
         mm = md->createMappingInTask(current_task(), NULL, kIOMapAnywhere);
-        DEBUG("mmaped at %p %p\n", *(mach_vm_address_t *)pData, mm->getAddress());
+        //DEBUG("mmaped at %p %p\n", *(mach_vm_address_t *)pData, mm->getAddress());
         *(mach_vm_address_t *)pData = mm->getAddress();
         ret = 0;
         break;
