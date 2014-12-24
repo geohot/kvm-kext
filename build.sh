@@ -33,9 +33,10 @@ exit
 
 # run test
 cd tests
-gcc cpu_test.c
+nasm irq_test.S
+gcc irq_test.c
+./a.out
 cd ..
-tests/a.out
 
 # print the log
 tail /var/log/system.log

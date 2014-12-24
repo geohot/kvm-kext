@@ -262,8 +262,8 @@ static int handle_external_interrupt(struct vcpu *vcpu) {
 }
 
 static int handle_apic_access(struct vcpu *vcpu) {
-  printf("apic access\n");
-  return 0;
+  printf("apic access: %lx\n", vcpu->exit_qualification);
+  //return 0;
   // TODO: maybe actually do something here?
   skip_emulated_instruction(vcpu);
   return 1;
@@ -768,7 +768,7 @@ static void vcpu_init() {
   //vmcs_write64(VIRTUAL_APIC_PAGE_ADDR, ~0LL);
   //vmcs_write64(APIC_ACCESS_ADDR, ~0LL);
 
-  /*void *virtual_apic_page = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+  void *virtual_apic_page = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
 	bzero(virtual_apic_page, PAGE_SIZE);
   vmcs_writel(VIRTUAL_APIC_PAGE_ADDR, __pa(virtual_apic_page));
 
@@ -777,11 +777,11 @@ static void vcpu_init() {
   vmcs_writel(APIC_ACCESS_ADDR, __pa(apic_access));
 
   // right?
-  ept_add_page(0xfee00000, __pa(apic_access));*/
+  ept_add_page(0xfee00000, __pa(apic_access));
 
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_NMI_EXITING | PIN_BASED_EXT_INTR_MASK);
   //vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_VMX_PREEMPTION_TIMER | PIN_BASED_EXT_INTR_MASK);
-  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING |
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_TPR_SHADOW |
     CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_MOV_DR_EXITING);
 
     /*CPU_BASED_INVLPG_EXITING | CPU_BASED_MWAIT_EXITING | CPU_BASED_RDPMC_EXITING | CPU_BASED_RDTSC_EXITING |
@@ -794,9 +794,12 @@ static void vcpu_init() {
   //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR | CPU_BASED_HLT_EXITING | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS);
   //vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT | SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
   //vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT | SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
-  vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
-  /*vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT |
-    SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES | SECONDARY_EXEC_APIC_REGISTER_VIRT);*/
+
+  printf("MSR_IA32_VMX_PROCBASED_CTLS2: %lx\n", rdmsr64(MSR_IA32_VMX_PROCBASED_CTLS2));
+
+  //vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT);
+  vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT |
+    SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
     //SECONDARY_EXEC_APIC_REGISTER_VIRT | SECONDARY_EXEC_VIRTUAL_INTR_DELIVERY);
     //SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
 
@@ -804,8 +807,8 @@ static void vcpu_init() {
   //vmcs_write32(SECONDARY_VM_EXEC_CONTROL, 0);
 
   // better not include PAT, EFER, or PERF_GLOBAL
-  vmcs_write32(VM_EXIT_CONTROLS, (VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR | VM_EXIT_HOST_ADDR_SPACE_SIZE) & ~VM_EXIT_SAVE_DEBUG_CONTROLS);
-  vmcs_write32(VM_ENTRY_CONTROLS, (VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR) & ~VM_ENTRY_LOAD_DEBUG_CONTROLS);
+  vmcs_write32(VM_EXIT_CONTROLS, VM_EXIT_ALWAYSON_WITHOUT_TRUE_MSR | VM_EXIT_HOST_ADDR_SPACE_SIZE);
+  vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR);
   //vmcs_write32(VM_ENTRY_CONTROLS, VM_ENTRY_ALWAYSON_WITHOUT_TRUE_MSR | VM_ENTRY_IA32E_MODE);
 
   //vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR);
@@ -868,6 +871,8 @@ static void vcpu_init() {
   vmcs_write64(CR3_TARGET_VALUE1, 0);
   vmcs_write64(CR3_TARGET_VALUE2, 0);
   vmcs_write64(CR3_TARGET_VALUE3, 0);
+
+  vmcs_write64(GUEST_PENDING_DBG_EXCEPTIONS, 0);
 
   vmcs_write32(GUEST_INTERRUPTIBILITY_INFO, 0); 
   vmcs_write32(GUEST_ACTIVITY_STATE, GUEST_ACTIVITY_ACTIVE); 
@@ -999,7 +1004,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
         if (vcpu->pending_irq & (1<<i)) {
           printf("delivering IRQ %d rflags %x\n", i, vcpu->arch.rflags);
           // vm exits clear the valid bit, no need to do by hand
-          intr_info = INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR | i;
+          intr_info = INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR | (i+8);
           vcpu->pending_irq &= ~(1<<i);
           break;
         }
@@ -1039,7 +1044,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
     RELEASE_VMCS
 
     // interrupt gets delivered here
-    asm("sti");
+    asm volatile ("sti");
 
     if (exit_reason < kvm_vmx_max_exit_handlers && kvm_vmx_exit_handlers[exit_reason] != NULL) {
       cont = kvm_vmx_exit_handlers[exit_reason](vcpu);
@@ -1170,6 +1175,9 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       break;
     case KVM_IRQ_LINE:
       ret = kvm_irq_line((struct kvm_irq_level *)pData);
+      break;
+    case KVM_REGISTER_COALESCED_MMIO:
+      printf("KVM_REGISTER_COALESCED_MMIO\n");
       break;
     default:
       break;
