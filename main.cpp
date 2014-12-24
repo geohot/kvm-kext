@@ -406,7 +406,7 @@ static void vcpu_init(struct vcpu *vcpu) {
   vmcs_write32(TPR_THRESHOLD, 0);
 
   vmcs_write64(CR0_GUEST_HOST_MASK, 0);
-  vmcs_write64(CR4_GUEST_HOST_MASK, 0);
+  vmcs_write64(CR4_GUEST_HOST_MASK, (1 << 13));  // guest can't disable vm
 
   vmcs_write64(CR0_READ_SHADOW, 0);
   vmcs_write64(CR4_READ_SHADOW, 0);
