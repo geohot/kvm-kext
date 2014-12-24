@@ -72,6 +72,8 @@ struct vcpu {
   unsigned long host_rsp;
   int pending_io;
 
+  unsigned long cr3_shadow;
+
   unsigned long exit_qualification;
   int exit_instruction_len;
   unsigned long phys;
@@ -97,6 +99,75 @@ struct vcpu {
 
 // TODO: shouldn't be global
 struct vcpu *global_vcpu;
+
+/* *********************** */
+/* ept functions */
+/* *********************** */
+
+static void ept_init(struct vcpu *vcpu) {
+  // EPT allocation
+	vcpu->pml4 = (unsigned long *)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+	bzero(vcpu->pml4, PAGE_SIZE*2);
+}
+
+#define PAGE_OFFSET 512
+#define EPT_DEFAULTS (VMX_EPT_EXECUTABLE_MASK | VMX_EPT_WRITABLE_MASK | VMX_EPT_READABLE_MASK)
+
+static unsigned long ept_translate(struct vcpu *vcpu, unsigned long virtual_address) {
+  int pml4_idx = (virtual_address >> 39) & 0x1FF;
+  int pdpt_idx = (virtual_address >> 30) & 0x1FF;
+  int pd_idx = (virtual_address >> 21) & 0x1FF;
+  int pt_idx = (virtual_address >> 12) & 0x1FF;
+  unsigned long *pdpt, *pd, *pt;
+  pdpt = (unsigned long*)vcpu->pml4[PAGE_OFFSET + pml4_idx];
+  if (pdpt == NULL) return 0;
+  pd = (unsigned long*)pdpt[PAGE_OFFSET + pdpt_idx];
+  if (pd == NULL) return 0;
+  pt = (unsigned long*)pd[PAGE_OFFSET + pd_idx];
+  if (pt == NULL) return 0;
+
+  return pt[pt_idx] & ~(PAGE_SIZE-1);
+}
+
+// could probably be managed by http://fxr.watson.org/fxr/source/osfmk/i386/pmap.h
+static void ept_add_page(struct vcpu *vcpu, unsigned long virtual_address, unsigned long physical_address) {
+  int pml4_idx = (virtual_address >> 39) & 0x1FF;
+  int pdpt_idx = (virtual_address >> 30) & 0x1FF;
+  int pd_idx = (virtual_address >> 21) & 0x1FF;
+  int pt_idx = (virtual_address >> 12) & 0x1FF;
+  unsigned long *pdpt, *pd, *pt;
+  //printf("%p @ %d %d %d %d\n", virtual_address, pml4_idx, pdpt_idx, pd_idx, pt_idx);
+
+  // allocate the pdpt in the pml4 if NULL
+  pdpt = (unsigned long*)vcpu->pml4[PAGE_OFFSET + pml4_idx];
+  if (pdpt == NULL) {
+    pdpt = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+    bzero(pdpt, PAGE_SIZE*2);
+    vcpu->pml4[PAGE_OFFSET + pml4_idx] = (unsigned long)pdpt;
+    vcpu->pml4[pml4_idx] = __pa(pdpt) | EPT_DEFAULTS;
+  }
+
+  // allocate the pd in the pdpt
+  pd = (unsigned long*)pdpt[PAGE_OFFSET + pdpt_idx];
+  if (pd == NULL) {
+    pd = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
+    bzero(pd, PAGE_SIZE*2);
+    pdpt[PAGE_OFFSET + pdpt_idx] = (unsigned long)pd;
+    pdpt[pdpt_idx] = __pa(pd) | EPT_DEFAULTS;
+  }
+
+  // allocate the pt in the pd
+  pt = (unsigned long*)pd[PAGE_OFFSET + pd_idx];
+  if (pt == NULL) {
+    pt = (unsigned long*)IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+    bzero(pt, PAGE_SIZE);
+    pd[PAGE_OFFSET + pd_idx] = (unsigned long)pt;
+    pd[pd_idx] = __pa(pt) | EPT_DEFAULTS;
+  }
+
+  // set the entry in the page table
+  pt[pt_idx] = physical_address | EPT_DEFAULTS;
+}
 
 /* *********************** */
 /* handle functions for different exit conditions */
@@ -242,6 +313,30 @@ static int handle_interrupt_window(struct vcpu *vcpu) {
   return 1;
 }
 
+static int handle_cr(struct vcpu *vcpu) {
+  int cr_num = vcpu->exit_qualification & CONTROL_REG_ACCESS_NUM;
+  int cr_type = (vcpu->exit_qualification & CONTROL_REG_ACCESS_TYPE) >> 4;
+  int cr_to_reg = (vcpu->exit_qualification & CONTROL_REG_ACCESS_REG) >> 8;
+
+  if (cr_num == 3) {
+    if (cr_type == 0) {
+      // mov to cr3
+      vcpu->cr3_shadow = vcpu->regs[cr_to_reg];
+      unsigned long pa = ept_translate(vcpu, vcpu->cr3_shadow);
+      printf("load cr3 %lx -> %lx\n", vcpu->cr3_shadow, pa);
+      vmcs_writel(GUEST_CR3, pa);
+    } else if (cr_type == 1) {
+      // mov from cr3
+      vcpu->regs[cr_to_reg] = vcpu->cr3_shadow;
+    }
+  } else {
+    printf("can't emulate cr%d\n", cr_num);
+  }
+  
+  skip_emulated_instruction(vcpu);
+  return 1;
+}
+
 // 0xfed00000 = HPET
 // 0xfee00000 = APIC
 
@@ -255,63 +350,12 @@ static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
   [EXIT_REASON_PREEMPTION_TIMER]        = handle_preemption_timer,
   [EXIT_REASON_APIC_ACCESS]             = handle_apic_access,
   [EXIT_REASON_PENDING_INTERRUPT]       = handle_interrupt_window,
+  [EXIT_REASON_CR_ACCESS]               = handle_cr,
 };
 
 static const int kvm_vmx_max_exit_handlers = ARRAY_SIZE(kvm_vmx_exit_handlers);
 
 
-/* *********************** */
-/* ept functions */
-/* *********************** */
-
-static void ept_init(struct vcpu *vcpu) {
-  // EPT allocation
-	vcpu->pml4 = (unsigned long *)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
-	bzero(vcpu->pml4, PAGE_SIZE*2);
-}
-
-#define PAGE_OFFSET 512
-#define EPT_DEFAULTS (VMX_EPT_EXECUTABLE_MASK | VMX_EPT_WRITABLE_MASK | VMX_EPT_READABLE_MASK)
-
-// could probably be managed by http://fxr.watson.org/fxr/source/osfmk/i386/pmap.h
-static void ept_add_page(struct vcpu *vcpu, unsigned long virtual_address, unsigned long physical_address) {
-  int pml4_idx = (virtual_address >> 39) & 0x1FF;
-  int pdpt_idx = (virtual_address >> 30) & 0x1FF;
-  int pd_idx = (virtual_address >> 21) & 0x1FF;
-  int pt_idx = (virtual_address >> 12) & 0x1FF;
-  unsigned long *pdpt, *pd, *pt;
-  //printf("%p @ %d %d %d %d\n", virtual_address, pml4_idx, pdpt_idx, pd_idx, pt_idx);
-
-  // allocate the pdpt in the pml4 if NULL
-  pdpt = (unsigned long*)vcpu->pml4[PAGE_OFFSET + pml4_idx];
-  if (pdpt == NULL) {
-    pdpt = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
-    bzero(pdpt, PAGE_SIZE*2);
-    vcpu->pml4[PAGE_OFFSET + pml4_idx] = (unsigned long)pdpt;
-    vcpu->pml4[pml4_idx] = __pa(pdpt) | EPT_DEFAULTS;
-  }
-
-  // allocate the pd in the pdpt
-  pd = (unsigned long*)pdpt[PAGE_OFFSET + pdpt_idx];
-  if (pd == NULL) {
-    pd = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
-    bzero(pd, PAGE_SIZE*2);
-    pdpt[PAGE_OFFSET + pdpt_idx] = (unsigned long)pd;
-    pdpt[pdpt_idx] = __pa(pd) | EPT_DEFAULTS;
-  }
-
-  // allocate the pt in the pd
-  pt = (unsigned long*)pd[PAGE_OFFSET + pd_idx];
-  if (pt == NULL) {
-    pt = (unsigned long*)IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
-    bzero(pt, PAGE_SIZE);
-    pd[PAGE_OFFSET + pd_idx] = (unsigned long)pt;
-    pd[pd_idx] = __pa(pt) | EPT_DEFAULTS;
-  }
-
-  // set the entry in the page table
-  pt[pt_idx] = physical_address | EPT_DEFAULTS;
-}
 
 
 /* *********************** */
@@ -375,7 +419,8 @@ static void vcpu_init(struct vcpu *vcpu) {
   ept_add_page(vcpu, 0xfee00000, __pa(vcpu->apic_access));
 
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_NMI_EXITING | PIN_BASED_EXT_INTR_MASK);
-  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR & ~(CPU_BASED_CR3_LOAD_EXITING | CPU_BASED_CR3_STORE_EXITING)) |
+  //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR & ~(CPU_BASED_CR3_LOAD_EXITING | CPU_BASED_CR3_STORE_EXITING)) |
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR) |
     CPU_BASED_TPR_SHADOW | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_MOV_DR_EXITING);
   vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT | SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
 
@@ -693,10 +738,6 @@ void kvm_run(struct vcpu *vcpu) {
   vcpu->regs[VCPU_REGS_RIP] = vmcs_readl(GUEST_RIP);
 }
 
-
-
-
-
 static int kvm_set_user_memory_region(struct vcpu *vcpu, struct kvm_userspace_memory_region *mr) {
   // check alignment
   unsigned long off;
@@ -795,16 +836,15 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
 
     exit_reason = vmcs_read32(VM_EXIT_REASON);
 
-    RELEASE_VMCS(vcpu);
-
-    // interrupt gets delivered here
-    asm volatile ("sti");
-
     if (exit_reason < kvm_vmx_max_exit_handlers && kvm_vmx_exit_handlers[exit_reason] != NULL) {
       cont = kvm_vmx_exit_handlers[exit_reason](vcpu);
     } else {
       cont = 0;
     }
+
+    RELEASE_VMCS(vcpu);
+    asm volatile ("sti");
+    // interrupt gets delivered here
 
     if (exit_reason != EXIT_REASON_IO_INSTRUCTION &&
         exit_reason != EXIT_REASON_PREEMPTION_TIMER &&

@@ -315,7 +315,7 @@ enum vmcs_field {
 /*
  * Exit Qualifications for MOV for Control Register Access
  */
-#define CONTROL_REG_ACCESS_NUM          0x7     /* 2:0, number of control reg.*/
+#define CONTROL_REG_ACCESS_NUM          0xF     /* 2:0, number of control reg.*/
 #define CONTROL_REG_ACCESS_TYPE         0x30    /* 5:4, access type */
 #define CONTROL_REG_ACCESS_REG          0xf00   /* 10:8, general purpose reg. */
 #define LMSW_SOURCE_DATA_SHIFT 16
