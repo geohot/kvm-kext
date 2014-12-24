@@ -257,22 +257,21 @@ static int handle_cpuid(struct vcpu *vcpu) {
 
 static int handle_rdmsr(struct vcpu *vcpu) {
   printf("rdmsr 0x%lX\n", vcpu->regs[VCPU_REGS_RCX]);
-  /*vcpu->regs[VCPU_REGS_RAX] = 0;
-  vcpu->regs[VCPU_REGS_RDX] = 0;*/
 
-  /*asm("rdmsr\n"
+  // emulation is lol
+  asm("rdmsr\n"
     : "=a"   (vcpu->regs[VCPU_REGS_RAX]),
       "=d"   (vcpu->regs[VCPU_REGS_RDX])
-    : "c"    (vcpu->regs[VCPU_REGS_RCX]));*/
+    : "c"    (vcpu->regs[VCPU_REGS_RCX]));
 
-  //skip_emulated_instruction(vcpu);
-  return 0;
+  skip_emulated_instruction(vcpu);
+  return 1;
 }
 
 static int handle_wrmsr(struct vcpu *vcpu) {
   printf("wrmsr 0x%lX\n", vcpu->regs[VCPU_REGS_RCX]);
-  //skip_emulated_instruction(vcpu);
-  return 0;
+  skip_emulated_instruction(vcpu);
+  return 1;
 }
 
 static int handle_ept_violation(struct vcpu *vcpu) {
@@ -313,6 +312,12 @@ static int handle_interrupt_window(struct vcpu *vcpu) {
   return 1;
 }
 
+static int handle_dr(struct vcpu *vcpu) {
+  // TODO: maybe actually do something here?
+  skip_emulated_instruction(vcpu);
+  return 1;
+}
+
 static int handle_cr(struct vcpu *vcpu) {
   int cr_num = vcpu->exit_qualification & CONTROL_REG_ACCESS_NUM;
   int cr_type = (vcpu->exit_qualification & CONTROL_REG_ACCESS_TYPE) >> 4;
@@ -324,10 +329,26 @@ static int handle_cr(struct vcpu *vcpu) {
       vcpu->cr3_shadow = vcpu->regs[cr_to_reg];
       unsigned long pa = ept_translate(vcpu, vcpu->cr3_shadow);
       printf("load cr3 %lx -> %lx\n", vcpu->cr3_shadow, pa);
-      vmcs_writel(GUEST_CR3, pa);
+      //vmcs_writel(GUEST_CR3, pa);
+      vmcs_writel(GUEST_CR3, vcpu->cr3_shadow);
     } else if (cr_type == 1) {
       // mov from cr3
       vcpu->regs[cr_to_reg] = vcpu->cr3_shadow;
+    }
+  } else if (cr_num == 0) {
+    if (cr_type == 0) {
+      unsigned long val = vcpu->regs[cr_to_reg];
+      // mov to cr0
+      vmcs_writel(GUEST_CR0, val);
+      if (val & (1 << 31)) {
+        // no unrestricted mode
+        vmcs_write32(SECONDARY_VM_EXEC_CONTROL, vmcs_read32(SECONDARY_VM_EXEC_CONTROL) & ~SECONDARY_EXEC_UNRESTRICTED_GUEST);
+        vmcs_write64(CR0_READ_SHADOW, (1 << 31));
+      } else {
+        // unrestricted mode
+        vmcs_write32(SECONDARY_VM_EXEC_CONTROL, vmcs_read32(SECONDARY_VM_EXEC_CONTROL) | SECONDARY_EXEC_UNRESTRICTED_GUEST);
+        vmcs_write64(CR0_READ_SHADOW, 0);
+      }
     }
   } else {
     printf("can't emulate cr%d\n", cr_num);
@@ -351,6 +372,7 @@ static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
   [EXIT_REASON_APIC_ACCESS]             = handle_apic_access,
   [EXIT_REASON_PENDING_INTERRUPT]       = handle_interrupt_window,
   [EXIT_REASON_CR_ACCESS]               = handle_cr,
+  [EXIT_REASON_DR_ACCESS]               = handle_dr,
 };
 
 static const int kvm_vmx_max_exit_handlers = ARRAY_SIZE(kvm_vmx_exit_handlers);
@@ -405,7 +427,7 @@ void init_host_values() {
 static void vcpu_init(struct vcpu *vcpu) {
   vmcs_write32(EXCEPTION_BITMAP, 0);
 
-  vmcs_writel(EPT_POINTER, __pa(vcpu->pml4) | (0x03 << 3));
+  vmcs_writel(EPT_POINTER, __pa(vcpu->pml4) | (3 << 3));
 
   vcpu->virtual_apic_page = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
 	bzero(vcpu->virtual_apic_page, PAGE_SIZE);
@@ -419,8 +441,8 @@ static void vcpu_init(struct vcpu *vcpu) {
   ept_add_page(vcpu, 0xfee00000, __pa(vcpu->apic_access));
 
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_NMI_EXITING | PIN_BASED_EXT_INTR_MASK);
-  //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR & ~(CPU_BASED_CR3_LOAD_EXITING | CPU_BASED_CR3_STORE_EXITING)) |
-  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR) |
+  //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR) |
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR & ~(CPU_BASED_CR3_LOAD_EXITING | CPU_BASED_CR3_STORE_EXITING)) |
     CPU_BASED_TPR_SHADOW | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_MOV_DR_EXITING);
   vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT | SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
 
@@ -450,10 +472,10 @@ static void vcpu_init(struct vcpu *vcpu) {
   vmcs_write32(VM_ENTRY_INSTRUCTION_LEN, 0);
   vmcs_write32(TPR_THRESHOLD, 0);
 
-  vmcs_write64(CR0_GUEST_HOST_MASK, 0);
-  vmcs_write64(CR4_GUEST_HOST_MASK, (1 << 13));  // guest can't disable vm
-
+  vmcs_write64(CR0_GUEST_HOST_MASK, (1 << 31));
   vmcs_write64(CR0_READ_SHADOW, 0);
+
+  vmcs_write64(CR4_GUEST_HOST_MASK, (1 << 13));  // guest can't disable vm
   vmcs_write64(CR4_READ_SHADOW, 0);
 
   vmcs_write64(CR3_TARGET_VALUE0, 0);
