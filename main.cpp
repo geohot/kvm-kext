@@ -378,8 +378,6 @@ static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
 static const int kvm_vmx_max_exit_handlers = ARRAY_SIZE(kvm_vmx_exit_handlers);
 
 
-
-
 /* *********************** */
 /* init functions, require VMCS lock */
 /* *********************** */
@@ -499,14 +497,6 @@ static void vcpu_init(struct vcpu *vcpu) {
 /* *********************** */
 /* device functions */
 /* *********************** */
-
-static int kvm_dev_open(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
-  return 0;
-}
-
-static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
-  return 0;
-}
 
 void kvm_show_regs(struct vcpu *vcpu) {
   printf("%8x: eax %08lx ebx %08lx ecx %08lx edx %08lx esi %016lx edi %08lx esp %08lx ebp %08lx eip %08lx rflags %08lx cr0: %lx cr3: %lx cr4: %lx\n",
@@ -927,6 +917,19 @@ static int kvm_irq_line(struct vcpu *vcpu, struct kvm_irq_level *irq) {
   return 0;
 }
 
+
+/* *********************** */
+/* device functions */
+/* *********************** */
+
+static int kvm_dev_open(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
+  return 0;
+}
+
+static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
+  return 0;
+}
+
 lck_mtx_t *big_ioctl_lock = NULL;
 
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
@@ -1105,6 +1108,9 @@ fail:
 }
 
 
+/* *********************** */
+/* kext registration */
+/* *********************** */
 
 static struct cdevsw kvm_functions = {
   /*.d_open     = */kvm_dev_open,
@@ -1126,7 +1132,6 @@ static struct cdevsw kvm_functions = {
 
 static int g_kvm_major;
 static void *g_kvm_ctl;
-
  
 kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
   int ret;
