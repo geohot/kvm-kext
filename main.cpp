@@ -874,7 +874,8 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
   IOMemoryDescriptor *md;
   IOMemoryMap *mm;
 
-  lck_mtx_lock(big_ioctl_lock);
+  // irqs must be async
+  if (iCmd != KVM_IRQ_LINE) lck_mtx_lock(big_ioctl_lock);
 
   // saw 0x14 once?
   if (pData == NULL || (u64)pData < PAGE_SIZE) goto fail;
@@ -1033,7 +1034,9 @@ fail:
     /* KVM_GET_TSC_KHZ, KVM_SET_FPU, KVM_SET_MP_STATE, KVM_SET_IRQCHIP */
     printf("%d %p get ioctl %lX with pData %p return %d\n", cpu_number(), pProcess, iCmd, pData, ret);
   }
-  lck_mtx_unlock(big_ioctl_lock);
+
+  if (iCmd != KVM_IRQ_LINE) lck_mtx_unlock(big_ioctl_lock);
+
   return ret;
 }
 
