@@ -990,19 +990,26 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
   unsigned long error, entry_error, phys, exit_intr_info;
   vcpu->kvm_vcpu->exit_reason = 0;
   while (cont && (maxcont++) < 1000) {
-    LOAD_VMCS
+    unsigned long intr_info = 0;
 
     if (exit_reason == EXIT_REASON_PENDING_INTERRUPT) {
+    //if (vcpu->arch.rflags & (1 << 9)) {
       // interrupt injection?
       for (i = 0; i < IRQ_MAX; i++) {
         if (vcpu->pending_irq & (1<<i)) {
-          printf("delivering IRQ %d : %x\n", i, vmcs_read32(VM_ENTRY_INTR_INFO_FIELD));
+          printf("delivering IRQ %d rflags %x\n", i, vcpu->arch.rflags);
           // vm exits clear the valid bit, no need to do by hand
-          vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR | i);
+          intr_info = INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR | i;
           vcpu->pending_irq &= ~(1<<i);
           break;
         }
       }
+    }
+
+    LOAD_VMCS
+
+    if (intr_info != 0) {
+      vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, intr_info);
     }
     
     if (vcpu->pending_irq) {
@@ -1030,6 +1037,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
     exit_reason = vmcs_read32(VM_EXIT_REASON);
 
     RELEASE_VMCS
+
     // interrupt gets delivered here
     asm("sti");
 
