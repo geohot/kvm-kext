@@ -490,6 +490,7 @@ int kvm_get_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   LOAD_VMCS(vcpu);
 
   sregs->cr0 = vmcs_readl(GUEST_CR0);
+  sregs->cr2 = vcpu->cr2;
   sregs->cr3 = vmcs_readl(GUEST_CR3);
   sregs->cr4 = vmcs_readl(GUEST_CR4);
 
@@ -527,6 +528,7 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
   printf("cr4 %lx %lx\n", sregs->cr4, vmcs_readl(GUEST_CR4));*/
 
   vmcs_writel(GUEST_CR0, sregs->cr0 | 0x20);
+  vcpu->cr2 = sregs->cr2;
   vmcs_writel(GUEST_CR3, sregs->cr3);
   vmcs_writel(GUEST_CR4, sregs->cr4 | (1<<13));
 
@@ -579,13 +581,13 @@ void kvm_run(struct vcpu *vcpu) {
 		"push %%rcx \n\t" /* placeholder for guest rcx */
 		"push %%rcx \n\t"
 
+		"mov %%rsp, %c[host_rsp](%0) \n\t"
+		__ex(ASM_VMX_VMWRITE_RSP_RDX) "\n\t"
+
     "sgdt %c[gdtr](%0)\n\t"
     "sidt %c[idtr](%0)\n\t"
     "sldt %c[ldtr](%0)\n\t"
 
-		"mov %%rsp, %c[host_rsp](%0) \n\t"
-		__ex(ASM_VMX_VMWRITE_RSP_RDX) "\n\t"
-		"1: \n\t"
 		/* Reload cr2 if changed */
 		"mov %c[cr2](%0), %%rax \n\t"
 		"mov %%cr2, %%rdx \n\t"
