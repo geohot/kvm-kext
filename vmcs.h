@@ -1,6 +1,6 @@
 static inline unsigned long vmcs_readl(unsigned long field)
 {
-  if (vmcs_loaded == 0) { printf("ERROR VMCS NOT LOADED\n"); }
+  //if (vmcs_loaded == 0) { printf("ERROR VMCS NOT LOADED\n"); }
 	unsigned long value = 0xBADC0DE;
 	u8 error;
 
@@ -28,7 +28,7 @@ static inline u64 vmcs_read64(unsigned long field)
 
 static void vmcs_writel(unsigned long field, unsigned long value)
 {
-  if (vmcs_loaded == 0) { printf("ERROR VMCS NOT LOADED\n"); }
+  //if (vmcs_loaded == 0) { printf("ERROR VMCS NOT LOADED\n"); }
   //printf("write: %lx <- %lx\n", field, value);
 	u8 error;
 
@@ -62,4 +62,39 @@ static void vmcs_set_bits(unsigned long field, u32 mask)
 {
 	vmcs_writel(field, vmcs_readl(field) | mask);
 }*/
+
+static void vmcs_load(struct vmcs *vmcs) {
+	u64 phys_addr = __pa(vmcs);
+	u8 error;
+
+	asm volatile (__ex(ASM_VMX_VMPTRLD_RAX) "; setna %0"
+			: "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
+			: "cc", "memory");
+	if (error)
+		printf("kvm: vmptrld %p/%llx failed\n", vmcs, phys_addr);
+}
+
+
+static void vmcs_clear(struct vmcs *vmcs) {
+	u64 phys_addr = __pa(vmcs);
+	u8 error;
+
+	asm volatile (__ex(ASM_VMX_VMCLEAR_RAX) "; setna %0"
+		      : "=qm"(error) : "a"(&phys_addr), "m"(phys_addr)
+		      : "cc", "memory");
+	if (error)
+		printf("kvm: vmclear fail: %p/%llx\n", vmcs, phys_addr);
+}
+
+typedef u64            gpa_t;
+static inline void __invept(int ext, u64 eptp, gpa_t gpa) {
+  struct {
+    u64 eptp, gpa; 
+  } operand = {eptp, gpa};
+
+  asm volatile (__ex(ASM_VMX_INVEPT)
+      /* CF==1 or ZF==1 --> rc = -1 */
+      : : "a" (&operand), "c" (ext) : "cc", "memory");
+}
+
 
