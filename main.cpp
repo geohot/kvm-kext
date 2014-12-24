@@ -746,7 +746,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
   unsigned long exit_reason = 0;
   unsigned long error, entry_error;
   vcpu->kvm_vcpu->exit_reason = 0;
-  while (cont && (maxcont++) < 1000) {
+  while (cont && (maxcont++) < 5000) {
     unsigned long intr_info = 0;
 
     if (exit_reason == EXIT_REASON_PENDING_INTERRUPT) {
