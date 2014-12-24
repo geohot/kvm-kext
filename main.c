@@ -81,6 +81,9 @@ struct vcpu {
   unsigned long host_rsp;
   int pending_io;
 
+  unsigned long exit_qualification;
+  int exit_instruction_len;
+
   int irq_level[IRQ_MAX];
   int pending_irq;
 
@@ -129,7 +132,7 @@ static inline void __invept(int ext, u64 eptp, gpa_t gpa) {
 struct vcpu *vcpu = &__vcpu;
 
 static void skip_emulated_instruction(struct vcpu *vcpu) {
-  vcpu->arch.regs[VCPU_REGS_RIP] += vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
+  vcpu->arch.regs[VCPU_REGS_RIP] += vcpu->exit_instruction_len;
 }
 
 // TODO: check for RIP and things
@@ -137,13 +140,7 @@ u64 kvm_register_read(struct vcpu *vcpu, int reg) { return vcpu->arch.regs[reg];
 void kvm_register_write(struct vcpu *vcpu, int reg, u64 value) { vcpu->arch.regs[reg] = value; }
 
 static int handle_io(struct vcpu *vcpu) {
-  /*u32 inter = vmcs_read32(GUEST_INTERRUPTIBILITY_INFO);
-  u32 activity = vmcs_read32(GUEST_ACTIVITY_STATE);
-  u64 debug = vmcs_readl(GUEST_IA32_DEBUGCTL);
-  u64 pending_debug = vmcs_readl(GUEST_PENDING_DBG_EXCEPTIONS);
-  u64 gla = vmcs_readl(GUEST_LINEAR_ADDRESS);*/
-
-  unsigned long exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
+  unsigned long exit_qualification = vcpu->exit_qualification;
   int in = (exit_qualification & 8) != 0;
 
   vcpu->kvm_vcpu->io.direction = in ? KVM_EXIT_IO_IN : KVM_EXIT_IO_OUT;
@@ -176,7 +173,6 @@ static int handle_cpuid(struct vcpu *vcpu) {
 
 	function = eax = kvm_register_read(vcpu, VCPU_REGS_RAX);
 	ecx = kvm_register_read(vcpu, VCPU_REGS_RCX);
-
 
   int found = 0;
 
@@ -239,8 +235,9 @@ static int handle_wrmsr(struct vcpu *vcpu) {
 }
 
 static int handle_ept_violation(struct vcpu *vcpu) {
-  u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
-  printf("!!ept violation at %llx\n", phys);
+  //u64 phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
+  //printf("!!ept violation at %llx\n", phys);
+  printf("!!ept violation\n");
   //return 0;
   skip_emulated_instruction(vcpu);
   return 1;
@@ -637,8 +634,6 @@ void kvm_run(struct vcpu *vcpu) {
     "lidt %c[idtr](%0)\n\t"
     "lgdt %c[gdtr](%0)\n\t"
 
-    "sti\n\t"
-    // interrupt gets delivered here
 
 	      : : "c"(vcpu), "d"((unsigned long)HOST_RSP),
 		[launched]"i"(offsetof(struct vcpu, __launched)),
@@ -1019,23 +1014,30 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
     }
 
     //kvm_show_regs();
+    // DISABLES INTERRUPTS!!!
     kvm_run(vcpu);
 
     //printf("%lx %lx\n", vcpu->arch.idtr.base, vcpu->arch.gdtr.base);
     //printf("vmcs: %lx\n", vcpu->vmcs);
 
-    exit_reason = vmcs_read32(VM_EXIT_REASON);
-    if (exit_reason < kvm_vmx_max_exit_handlers && kvm_vmx_exit_handlers[exit_reason] != NULL) {
-      cont = kvm_vmx_exit_handlers[exit_reason](vcpu);
-    } else {
-      cont = 0;
-    }
     error = vmcs_read32(VM_INSTRUCTION_ERROR);
     entry_error = vmcs_read32(VM_ENTRY_EXCEPTION_ERROR_CODE);
     phys = vmcs_readl(GUEST_PHYSICAL_ADDRESS);
     //exit_intr_info = vmcs_readl(VM_EXIT_INTR_INFO);
 
+    vcpu->exit_instruction_len = vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
+    vcpu->exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
+    exit_reason = vmcs_read32(VM_EXIT_REASON);
+
     RELEASE_VMCS
+    // interrupt gets delivered here
+    asm("sti");
+
+    if (exit_reason < kvm_vmx_max_exit_handlers && kvm_vmx_exit_handlers[exit_reason] != NULL) {
+      cont = kvm_vmx_exit_handlers[exit_reason](vcpu);
+    } else {
+      cont = 0;
+    }
 
     if (exit_reason != EXIT_REASON_IO_INSTRUCTION &&
         exit_reason != EXIT_REASON_PREEMPTION_TIMER &&

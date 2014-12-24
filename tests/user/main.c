@@ -368,11 +368,14 @@ int main(int ac, char **av)
 	    fprintf(stderr, "kvm_init failed\n");
 	    return 1;
 	}
+  printf("kvm_init done\n");
 	if (kvm_create(kvm, 128 * 1024 * 1024, &vm_mem) < 0) {
 	    kvm_finalize(kvm);
 	    fprintf(stderr, "kvm_create failed\n");
 	    return 1;
 	}
+  printf("kvm_create done %p\n", vm_mem);
+
 	if (ac > 1) {
 	    if (strcmp(av[1], "-32") != 0)
 		load_file(vm_mem + 0xf0000, av[1]);
@@ -382,14 +385,19 @@ int main(int ac, char **av)
 	if (ac > 2)
 	    load_file(vm_mem + 0x100000, av[2]);
 
+  printf("load file done\n");
 	sem_init(&init_sem, 0, 0);
 	init_vcpu(0);
+  printf("init vcpu done\n");
 	for (i = 1; i < ncpus; ++i)
 	    start_vcpu(i);
+  printf("start vcpu done\n");
 	for (i = 0; i < ncpus; ++i)
 	    sem_wait(&init_sem);
 
+  printf("kvm_run\n");
 	kvm_run(kvm, 0);
+  printf("kvm_run done\n");
 
 	return 0;
 }

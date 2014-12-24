@@ -237,13 +237,13 @@ int kvm_create_vcpu(kvm_context_t kvm, int slot)
 		fprintf(stderr, "get vcpu mmap size: %m\n");
 		return r;
 	}
-	kvm->run[slot] = mmap(NULL, mmap_size, PROT_READ|PROT_WRITE, MAP_SHARED,
-			      kvm->vcpu_fd[slot], 0);
-	if (kvm->run[slot] == MAP_FAILED) {
+  ioctl(kvm->fd, KVM_MMAP_VCPU, &kvm->run[slot]);
+	//kvm->run[slot] = mmap(NULL, mmap_size, PROT_READ|PROT_WRITE, MAP_SHARED, kvm->vcpu_fd[slot], 0);
+	/*if (kvm->run[slot] == MAP_FAILED) {
 		r = -errno;
 		fprintf(stderr, "mmap vcpu area: %m\n");
 		return r;
-	}
+	}*/
 	return 0;
 }
 
@@ -256,17 +256,17 @@ int kvm_create(kvm_context_t kvm, unsigned long phys_mem_bytes, void **vm_mem)
 	int fd = kvm->fd;
 	int zfd;
 	int r;
-	struct kvm_memory_region low_memory = {
+	struct kvm_userspace_memory_region low_memory = {
 		.slot = 3,
 		.memory_size = memory  < dosmem ? memory : dosmem,
 		.guest_phys_addr = 0,
 	};
-	struct kvm_memory_region extended_memory = {
+	struct kvm_userspace_memory_region extended_memory = {
 		.slot = 0,
 		.memory_size = memory < exmem ? 0 : memory - exmem,
 		.guest_phys_addr = exmem,
 	};
-	struct kvm_memory_region above_4g_memory = {
+	struct kvm_userspace_memory_region above_4g_memory = {
 		.slot = 4,
 		.memory_size = memory < pcimem ? 0 : memory - pcimem,
 		.guest_phys_addr = 0x100000000,
@@ -284,43 +284,52 @@ int kvm_create(kvm_context_t kvm, unsigned long phys_mem_bytes, void **vm_mem)
 	}
 	kvm->vm_fd = fd;
 
+	kvm->physical_memory = mmap(NULL, extended_memory.memory_size + exmem, 7, MAP_ANON|MAP_SHARED, -1, 0);
+
 	/* 640K should be enough. */
-	r = ioctl(fd, KVM_SET_MEMORY_REGION, &low_memory);
+  low_memory.userspace_addr = kvm->physical_memory;
+	r = ioctl(fd, KVM_SET_USER_MEMORY_REGION, &low_memory);
 	if (r == -1) {
 		fprintf(stderr, "kvm_create_memory_region: %m\n");
 		return -1;
 	}
 	if (extended_memory.memory_size) {
-		r = ioctl(fd, KVM_SET_MEMORY_REGION, &extended_memory);
+    extended_memory.userspace_addr = kvm->physical_memory + exmem;
+		r = ioctl(fd, KVM_SET_USER_MEMORY_REGION, &extended_memory);
 		if (r == -1) {
 			fprintf(stderr, "kvm_create_memory_region: %m\n");
 			return -1;
 		}
 	}
 
-	if (above_4g_memory.memory_size) {
-		r = ioctl(fd, KVM_SET_MEMORY_REGION, &above_4g_memory);
+  *vm_mem = kvm->physical_memory;
+
+	/*if (above_4g_memory.memory_size) {
+    above_4g_memory.userspace_addr = mmap(NULL, above_4g_memory.memory_size, 7, MAP_ANON|MAP_SHARED, -1, 0); 
+		r = ioctl(fd, KVM_SET_USER_MEMORY_REGION, &above_4g_memory);
 		if (r == -1) {
 			fprintf(stderr, "kvm_create_memory_region: %m\n");
 			return -1;
 		}
-	}
+	}*/
 
-	kvm_memory_region_save_params(kvm, &low_memory);
+	/*kvm_memory_region_save_params(kvm, &low_memory);
 	kvm_memory_region_save_params(kvm, &extended_memory);
-	kvm_memory_region_save_params(kvm, &above_4g_memory);
+	kvm_memory_region_save_params(kvm, &above_4g_memory);*/
 
-	*vm_mem = mmap(NULL, memory, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+	/**vm_mem = mmap(NULL, memory, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
 	if (*vm_mem == MAP_FAILED) {
 		fprintf(stderr, "mmap: %m\n");
 		return -1;
 	}
-	kvm->physical_memory = *vm_mem;
+	kvm->physical_memory = *vm_mem;*/
 
-	zfd = open("/dev/zero", O_RDONLY);
+	/*zfd = open("/dev/zero", O_RDONLY);
 	mmap(*vm_mem + 0xa8000, 0x8000, PROT_READ|PROT_WRITE,
 	     MAP_PRIVATE|MAP_FIXED, zfd, 0);
-	close(zfd);
+	close(zfd);*/
+
+	//kvm->physical_memory = low_memory.userspace_addr;
 
 	kvm->irqchip_in_kernel = 0;
 	if (!kvm->no_irqchip_creation) {
@@ -1007,12 +1016,12 @@ static int kvm_run_abi10(kvm_context_t kvm, int vcpu)
 	struct kvm_run_abi10 *run = (struct kvm_run_abi10 *)kvm->run[vcpu];
 
 again:
-	run->request_interrupt_window = try_push_interrupts(kvm);
-	r = pre_kvm_run(kvm, vcpu);
+	//run->request_interrupt_window = try_push_interrupts(kvm);
+	/*r = pre_kvm_run(kvm, vcpu);
 	if (r)
-	    return r;
+	    return r;*/
 	r = ioctl(fd, KVM_RUN, 0);
-	post_kvm_run(kvm, vcpu);
+	//post_kvm_run(kvm, vcpu);
 
 	run->io_completed = 0;
 	if (r == -1 && errno != EINTR) {
@@ -1081,17 +1090,18 @@ int kvm_run(kvm_context_t kvm, int vcpu)
 	int fd = kvm->vcpu_fd[vcpu];
 	struct kvm_run *run = kvm->run[vcpu];
 
-	if (kvm_abi == 10)
-		return kvm_run_abi10(kvm, vcpu);
+	/*if (kvm_abi == 10)
+		return kvm_run_abi10(kvm, vcpu);*/
 
 again:
-	if (!kvm->irqchip_in_kernel)
-		run->request_interrupt_window = try_push_interrupts(kvm);
-	r = pre_kvm_run(kvm, vcpu);
-	if (r)
-	    return r;
+//	if (!kvm->irqchip_in_kernel)
+//		run->request_interrupt_window = try_push_interrupts(kvm);
+	//r = pre_kvm_run(kvm, vcpu);
+	//if (r)
+	//    return r;
 	r = ioctl(fd, KVM_RUN, 0);
-	post_kvm_run(kvm, vcpu);
+  printf("here\n");
+	//post_kvm_run(kvm, vcpu);
 
 	if (r == -1 && errno != EINTR && errno != EAGAIN) {
 		r = -errno;
