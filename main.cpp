@@ -864,7 +864,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
       // interrupt injection?
       for (i = 0; i < IRQ_MAX; i++) {
         if (vcpu->pending_irq & (1<<i)) {
-          if (i != 6) printf("delivering IRQ %d rflags %lx\n", i, vcpu->rflags);
+          if (i != 0 && i != 6) printf("delivering IRQ %d rflags %lx\n", i, vcpu->rflags);
           // vm exits clear the valid bit, no need to do by hand
           if (vcpu->paging) {
             // is this the right place?  it's 0x20 for 410 kernels, perhaps linux is different
@@ -878,10 +878,10 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
       }
     }
 
-    /*if (exit_reason == EXIT_REASON_EXTERNAL_INTERRUPT) {
+    if (exit_reason == EXIT_REASON_EXTERNAL_INTERRUPT) {
       // hacks for the timer
       vcpu->pending_irq |= 1;
-    }*/
+    }
 
     LOAD_VMCS(vcpu);
 
