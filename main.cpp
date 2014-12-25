@@ -254,6 +254,21 @@ static int handle_cpuid(struct vcpu *vcpu) {
   // I suspect the fix for this is a proper KVM_GET_SUPPORTED_CPUID
   //if (function == 1) edx |= 1 | (1 << 4);
 
+  // xgetbv is JOKES
+  if (function == 1) {
+    // no sse
+    edx &= ~(1<<25 | 1<<26);
+
+    // no sse3
+    ecx &= ~(1<<0 | 1<<9);
+
+    // no sse4
+    ecx &= ~(1<<19 | 1<<20);
+    
+    // no xsave
+    ecx &= ~(1<<26 | 1<<27);
+  }
+
 	vcpu->regs[VCPU_REGS_RAX] = eax;
 	vcpu->regs[VCPU_REGS_RBX] = ebx;
 	vcpu->regs[VCPU_REGS_RCX] = ecx;
@@ -371,6 +386,7 @@ static int handle_cr(struct vcpu *vcpu) {
 }
 
 static int handle_task_switch(struct vcpu *vcpu) {
+  printf("task switch\n");
   return 1;
 }
 
@@ -440,7 +456,8 @@ void init_host_values() {
 }
 
 static void vcpu_init(struct vcpu *vcpu) {
-  vmcs_write32(EXCEPTION_BITMAP, 0);
+  //vmcs_write32(EXCEPTION_BITMAP, 0);
+  vmcs_write32(EXCEPTION_BITMAP, (1 << 6));
 
   vmcs_writel(EPT_POINTER, __pa(vcpu->pml4) | (3 << 3));
 
