@@ -249,7 +249,7 @@ static int handle_cpuid(struct vcpu *vcpu) {
 
   // TODO: hack for FPU
   // I suspect the fix for this is a proper KVM_GET_SUPPORTED_CPUID
-  if (function == 1) edx |= 1 | (1 << 4);
+  //if (function == 1) edx |= 1 | (1 << 4);
 
 	vcpu->regs[VCPU_REGS_RAX] = eax;
 	vcpu->regs[VCPU_REGS_RBX] = ebx;
@@ -789,9 +789,47 @@ static int kvm_set_user_memory_region(struct vcpu *vcpu, struct kvm_userspace_me
   return 0;
 }
 
-static int kvm_get_supported_cpuid(struct kvm_cpuid2 *cpuid) {
-  // how do I copy the rest from user space if I only have a kernel space address?
-  cpuid->nent = 0;
+
+static int kvm_get_supported_cpuid(struct kvm_cpuid2 *cpuid2) {
+  int i;
+
+  struct kvm_cpuid_entry2 param[] = { 
+    { .function = 0x40000000 },
+    { .function = 0x40000001 },
+    { .function = 0 },
+    { .function = 1 },
+    { .function = 2 },
+    { .function = 3 },
+    { .function = 4 },
+    { .function = 4, .index = 1 },
+    { .function = 4, .index = 2 },
+    { .function = 4, .index = 3 },
+    { .function = 0x80000000 },
+    { .function = 0x80000001 },
+    { .function = 0x80000002 },
+    { .function = 0x80000003 },
+    { .function = 0x80000004 },
+  }; 
+
+  if (cpuid2->nent < ARRAY_SIZE(param)) return E2BIG;
+  cpuid2->nent = ARRAY_SIZE(param);
+
+  for (i = 0; i < ARRAY_SIZE(param); i++) {
+    asm(
+        "push %%rbx       \n"
+        "cpuid             \n"
+        "mov  %%rbx, %%rsi\n"
+        "pop  %%rbx       \n"
+      : "=a"   (param[i].eax),
+        "=S"   (param[i].ebx),
+        "=c"   (param[i].ecx),
+        "=d"   (param[i].edx)
+      : "a"    (param[i].function),
+        "c"    (param[i].index));
+  }
+
+  copyout(param, cpuid2->self + offsetof(struct kvm_cpuid2, entries), cpuid2->nent * sizeof(struct kvm_cpuid_entry2));
+
   return 0;
 }
 
