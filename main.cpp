@@ -1150,6 +1150,8 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       memcpy(pData, &vcpu->irqchip, sizeof(struct kvm_irqchip));
       break;
     case KVM_SET_IRQCHIP:
+      // BUG: this was broken because IOR was used instead of IOW
+      // stupid linux people
       memcpy(&vcpu->irqchip, pData, sizeof(struct kvm_irqchip));
       ret = kvm_set_irqchip(vcpu);
       break;
@@ -1167,6 +1169,8 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       ret = 0;
       break;
     case KVM_SET_PIT:
+      // BUG: this was broken because IOR was used instead of IOW
+      // stupid linux people
       memcpy(&vcpu->pit_state, pData, sizeof(struct kvm_pit_state));
       ret = kvm_set_pit(vcpu);
       break;

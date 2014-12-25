@@ -1012,10 +1012,10 @@ struct kvm_s390_ucas_mapping {
 #define KVM_CREATE_IRQCHIP        _IO(KVMIO,   0x60)
 #define KVM_IRQ_LINE              _IOW(KVMIO,  0x61, struct kvm_irq_level)
 #define KVM_GET_IRQCHIP           _IOWR(KVMIO, 0x62, struct kvm_irqchip)
-#define KVM_SET_IRQCHIP           _IOR(KVMIO,  0x63, struct kvm_irqchip)
+#define KVM_SET_IRQCHIP           _IOWR(KVMIO,  0x63, struct kvm_irqchip)
 #define KVM_CREATE_PIT            _IO(KVMIO,   0x64)
 #define KVM_GET_PIT               _IOWR(KVMIO, 0x65, struct kvm_pit_state)
-#define KVM_SET_PIT               _IOR(KVMIO,  0x66, struct kvm_pit_state)
+#define KVM_SET_PIT               _IOWR(KVMIO,  0x66, struct kvm_pit_state)
 #define KVM_IRQ_LINE_STATUS       _IOWR(KVMIO, 0x67, struct kvm_irq_level)
 #define KVM_REGISTER_COALESCED_MMIO \
 			_IOW(KVMIO,  0x67, struct kvm_coalesced_mmio_zone)

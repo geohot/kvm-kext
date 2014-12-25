@@ -86,7 +86,13 @@ int main(int argc, char *argv[]) {
   };
   err = kvm_ioctl(vm_fd, KVM_SET_USER_MEMORY_REGION, &low_memory);
   printf("memory set up: %d\n", err);
+  
 
+  kvm_ioctl(vm_fd, KVM_CREATE_IRQCHIP, 0);
+  struct kvm_irqchip irqchip;
+  irqchip.chip.pic.irq_base = 0xAA;
+  kvm_ioctl(vm_fd, KVM_SET_IRQCHIP, &irqchip);
+  
 
   int vcpu_fd = kvm_ioctl(vm_fd, KVM_CREATE_VCPU, 0);
   printf("three fds %d %d %d\n", kvm_fd, vm_fd, vcpu_fd);
