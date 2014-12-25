@@ -456,8 +456,8 @@ static void vcpu_init(struct vcpu *vcpu) {
   ept_add_page(vcpu, 0xfee00000, __pa(vcpu->apic_access));
 
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_NMI_EXITING | PIN_BASED_EXT_INTR_MASK);
-  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR) |
-  //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR & ~(CPU_BASED_CR3_LOAD_EXITING | CPU_BASED_CR3_STORE_EXITING)) |
+  //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR) |
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR & ~(CPU_BASED_CR3_LOAD_EXITING | CPU_BASED_CR3_STORE_EXITING)) |
     CPU_BASED_TPR_SHADOW | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_MOV_DR_EXITING);
   vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT | SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
 
@@ -867,8 +867,8 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
           if (i != 6) printf("delivering IRQ %d rflags %lx\n", i, vcpu->rflags);
           // vm exits clear the valid bit, no need to do by hand
           if (vcpu->paging) {
-            // is this the right place?
-            intr_info = INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR | (i+0x20);
+            // is this the right place?  it's 0x20 for 410 kernels, perhaps linux is different
+            intr_info = INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR | (i+0x30);
           } else {
             intr_info = INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR | (i+8);
           }
@@ -973,6 +973,10 @@ static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
 
 static int kvm_irq_line(struct vcpu *vcpu, struct kvm_irq_level *irq) {
   //if (irq->level != 0) printf("irq %d = %d\n", irq->irq, irq->level);
+
+  // don't ask about the interrupt thing, i'm mad too
+
+  asm volatile ("cli");
   if (irq->irq < IRQ_MAX) {
     if (vcpu->irq_level[irq->irq] == 0 && irq->level == 1) {
       // trigger on rising edge?
@@ -980,6 +984,7 @@ static int kvm_irq_line(struct vcpu *vcpu, struct kvm_irq_level *irq) {
     }
     vcpu->irq_level[irq->irq] = irq->level;
   }
+  asm volatile ("sti");
   return 0;
 }
 
