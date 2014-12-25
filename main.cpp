@@ -95,6 +95,8 @@ struct vcpu {
 
   // store the physical addresses on the first page, and the virtual addresses on the second page
   unsigned long *pml4;
+
+  struct kvm_pit_state pit_state;
 };
 
 // TODO: shouldn't be global
@@ -213,10 +215,12 @@ static int handle_cpuid(struct vcpu *vcpu) {
 	function = eax = vcpu->regs[VCPU_REGS_RAX];
 	ecx = vcpu->regs[VCPU_REGS_RCX];
 
+  //printf("cpuid function 0x%x index 0x%x\n", function, ecx);
+
   int found = 0;
 
   for (i = 0; i < vcpu->cpuid_count; i++) {
-    if (vcpu->cpuids[i].function == function) {
+    if (vcpu->cpuids[i].function == function && vcpu->cpuids[i].index == ecx) {
       eax = vcpu->cpuids[i].eax;
       ebx = vcpu->cpuids[i].ebx;
       ecx = vcpu->cpuids[i].ecx;
@@ -227,7 +231,6 @@ static int handle_cpuid(struct vcpu *vcpu) {
   }
 
   if (found == 0) {
-    //printf("MISS cpuid function 0x%x index 0x%x\n", function, ecx);
     // lol emulate
     asm(
         "push %%rbx       \n"
@@ -245,7 +248,8 @@ static int handle_cpuid(struct vcpu *vcpu) {
   }
 
   // TODO: hack for FPU
-  if (function == 1) edx |= 1;
+  // I suspect the fix for this is a proper KVM_GET_SUPPORTED_CPUID
+  if (function == 1) edx |= 1 | (1 << 4);
 
 	vcpu->regs[VCPU_REGS_RAX] = eax;
 	vcpu->regs[VCPU_REGS_RBX] = ebx;
@@ -342,10 +346,12 @@ static int handle_cr(struct vcpu *vcpu) {
       // mov to cr0
       vmcs_writel(GUEST_CR0, val);
       if (val & (1 << 31)) {
+        printf("paging is on\n");
         // no unrestricted mode
         vmcs_write32(SECONDARY_VM_EXEC_CONTROL, vmcs_read32(SECONDARY_VM_EXEC_CONTROL) & ~SECONDARY_EXEC_UNRESTRICTED_GUEST);
         vmcs_write64(CR0_READ_SHADOW, (1 << 31));
       } else {
+        printf("paging is off\n");
         // unrestricted mode
         vmcs_write32(SECONDARY_VM_EXEC_CONTROL, vmcs_read32(SECONDARY_VM_EXEC_CONTROL) | SECONDARY_EXEC_UNRESTRICTED_GUEST);
         vmcs_write64(CR0_READ_SHADOW, 0);
@@ -356,6 +362,10 @@ static int handle_cr(struct vcpu *vcpu) {
   }
   
   skip_emulated_instruction(vcpu);
+  return 1;
+}
+
+static int handle_task_switch(struct vcpu *vcpu) {
   return 1;
 }
 
@@ -374,6 +384,7 @@ static int (*const kvm_vmx_exit_handlers[])(struct vcpu *vcpu) = {
   [EXIT_REASON_PENDING_INTERRUPT]       = handle_interrupt_window,
   [EXIT_REASON_CR_ACCESS]               = handle_cr,
   [EXIT_REASON_DR_ACCESS]               = handle_dr,
+  [EXIT_REASON_TASK_SWITCH]             = handle_task_switch,
 };
 
 static const int kvm_vmx_max_exit_handlers = ARRAY_SIZE(kvm_vmx_exit_handlers);
@@ -440,8 +451,8 @@ static void vcpu_init(struct vcpu *vcpu) {
   ept_add_page(vcpu, 0xfee00000, __pa(vcpu->apic_access));
 
   vmcs_write32(PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_ALWAYSON_WITHOUT_TRUE_MSR | PIN_BASED_NMI_EXITING | PIN_BASED_EXT_INTR_MASK);
-  //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR) |
-  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR & ~(CPU_BASED_CR3_LOAD_EXITING | CPU_BASED_CR3_STORE_EXITING)) |
+  vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR) |
+  //vmcs_write32(CPU_BASED_VM_EXEC_CONTROL, (CPU_BASED_ALWAYSON_WITHOUT_TRUE_MSR & ~(CPU_BASED_CR3_LOAD_EXITING | CPU_BASED_CR3_STORE_EXITING)) |
     CPU_BASED_TPR_SHADOW | CPU_BASED_ACTIVATE_SECONDARY_CONTROLS | CPU_BASED_UNCOND_IO_EXITING | CPU_BASED_MOV_DR_EXITING);
   vmcs_write32(SECONDARY_VM_EXEC_CONTROL, SECONDARY_EXEC_UNRESTRICTED_GUEST | SECONDARY_EXEC_ENABLE_EPT | SECONDARY_EXEC_VIRTUALIZE_APIC_ACCESSES);
 
@@ -819,6 +830,11 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
       }
     }
 
+    /*if (exit_reason == EXIT_REASON_EXTERNAL_INTERRUPT) {
+      // hacks for the timer
+      vcpu->pending_irq |= 1;
+    }*/
+
     LOAD_VMCS(vcpu);
 
     if (intr_info != 0) {
@@ -863,6 +879,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
         exit_reason != EXIT_REASON_PREEMPTION_TIMER &&
         exit_reason != EXIT_REASON_EXTERNAL_INTERRUPT &&
         exit_reason != EXIT_REASON_PENDING_INTERRUPT &&
+        exit_reason != EXIT_REASON_TASK_SWITCH &&
         exit_reason != EXIT_REASON_CPUID) {
       printf("%3d -(%d,%d)- entry %ld exit %ld(0x%lx) error %ld phys 0x%lx    rip %lx  rsp %lx\n",
         maxcont, cpun, cpu_number(),
@@ -872,7 +889,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
     if (error != 0) break;
   }
   if (cont == 1) {
-    printf("EXIT FROM TIMEOUT %lx\n", exit_reason);
+    printf("%d EXIT FROM TIMEOUT %lx\n", maxcont, exit_reason);
   }
   //kvm_show_regs();
 
@@ -893,16 +910,16 @@ static int kvm_set_msrs(struct vcpu *vcpu, struct kvm_msrs *msrs) {
 }
 
 static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
-  //int i;
+  int i;
   printf("got %d cpuids at %p\n", cpuid2->nent, cpuid2);
 
   vcpu->cpuid_count = cpuid2->nent;
   vcpu->cpuids = (struct kvm_cpuid_entry2*)IOMalloc(vcpu->cpuid_count * sizeof(struct kvm_cpuid_entry2));
   copyin(cpuid2->self + offsetof(struct kvm_cpuid2, entries), vcpu->cpuids, vcpu->cpuid_count * sizeof(struct kvm_cpuid_entry2));
 
-  /*for (i = 0; i < vcpu->cpuid_count; i++) {
-    printf("  got cpuid 0x%x 0x%x\n", vcpu->cpuids[i].function, vcpu->cpuids[i].index);
-  }*/
+  for (i = 0; i < vcpu->cpuid_count; i++) {
+    printf("  got cpuid 0x%x 0x%x = %x %x\n", vcpu->cpuids[i].function, vcpu->cpuids[i].index, vcpu->cpuids[i].edx, vcpu->cpuids[i].ecx);
+  }
   return 0;
 }
 
@@ -914,6 +931,28 @@ static int kvm_irq_line(struct vcpu *vcpu, struct kvm_irq_level *irq) {
       vcpu->pending_irq |= 1 << irq->irq;
     }
     vcpu->irq_level[irq->irq] = irq->level;
+  }
+  return 0;
+}
+
+static int kvm_set_pit(struct vcpu *vcpu) {
+  int channel;
+  printf("KVM_SET_PIT\n");
+  for (channel = 0; channel < 3; channel++) {
+    printf("pit %d: %d %d %d   status_latched: %d %d %d %d %d   rw_mode: %d %d %d %d  %lld\n", channel,
+      vcpu->pit_state.channels[channel].count,
+      vcpu->pit_state.channels[channel].latched_count,
+      vcpu->pit_state.channels[channel].count_latched,
+      vcpu->pit_state.channels[channel].status_latched,
+      vcpu->pit_state.channels[channel].status,
+      vcpu->pit_state.channels[channel].read_state,
+      vcpu->pit_state.channels[channel].write_state,
+      vcpu->pit_state.channels[channel].write_latch,
+      vcpu->pit_state.channels[channel].rw_mode,
+      vcpu->pit_state.channels[channel].mode,
+      vcpu->pit_state.channels[channel].bcd,
+      vcpu->pit_state.channels[channel].gate,
+      vcpu->pit_state.channels[channel].count_load_time);
   }
   return 0;
 }
@@ -932,6 +971,7 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
 }
 
 lck_mtx_t *big_ioctl_lock = NULL;
+lck_mtx_t *big_ioctl_lock2 = NULL;
 
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   int ret = EOPNOTSUPP;
@@ -944,6 +984,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
 
   // irqs must be async
   if (iCmd != KVM_IRQ_LINE) lck_mtx_lock(big_ioctl_lock);
+  else lck_mtx_lock(big_ioctl_lock2);
 
   // saw 0x14 once?
   if (pData == NULL || (u64)pData < PAGE_SIZE) goto fail;
@@ -1024,6 +1065,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       ret = 0;
       break;
     case KVM_SET_TSS_ADDR:
+      printf("KVM_SET_TSS_ADDR %lx\n", *(unsigned long *)pData);
       ret = 0;
       break;
     /* interrupts! */
@@ -1040,11 +1082,12 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       break;
     case KVM_GET_PIT:
       //printf("KVM_GET_PIT\n");
+      memcpy(pData, &vcpu->pit_state, sizeof(struct kvm_pit_state));
       ret = 0;
       break;
     case KVM_SET_PIT:
-      printf("KVM_SET_PIT\n");
-      ret = 0;
+      memcpy(&vcpu->pit_state, pData, sizeof(struct kvm_pit_state));
+      ret = kvm_set_pit(vcpu);
       break;
     /* FPU */
     case KVM_SET_FPU:
@@ -1104,6 +1147,7 @@ fail:
   }
 
   if (iCmd != KVM_IRQ_LINE) lck_mtx_unlock(big_ioctl_lock);
+  else lck_mtx_unlock(big_ioctl_lock2);
 
   return ret;
 }
@@ -1140,6 +1184,7 @@ kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
 
 
   big_ioctl_lock = (lck_mtx_t *)IOLockAlloc();
+  big_ioctl_lock2 = (lck_mtx_t *)IOLockAlloc();
 
   mp_lock_grp_attr = lck_grp_attr_alloc_init();
   mp_lock_grp = lck_grp_alloc_init("vmx", mp_lock_grp_attr);
