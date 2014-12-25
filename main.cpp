@@ -111,6 +111,7 @@ static void ept_init(struct vcpu *vcpu) {
 }
 
 #define PAGE_OFFSET 512
+#define EPT_CACHE_WRITEBACK (6 << 3)
 #define EPT_DEFAULTS (VMX_EPT_EXECUTABLE_MASK | VMX_EPT_WRITABLE_MASK | VMX_EPT_READABLE_MASK)
 
 static unsigned long ept_translate(struct vcpu *vcpu, unsigned long virtual_address) {
@@ -166,7 +167,7 @@ static void ept_add_page(struct vcpu *vcpu, unsigned long virtual_address, unsig
   }
 
   // set the entry in the page table
-  pt[pt_idx] = physical_address | EPT_DEFAULTS;
+  pt[pt_idx] = physical_address | EPT_DEFAULTS | EPT_CACHE_WRITEBACK;
 }
 
 /* *********************** */
@@ -617,7 +618,7 @@ int kvm_set_sregs(struct vcpu *vcpu, struct kvm_sregs *sregs) {
 
 void kvm_run(struct vcpu *vcpu) {
   // all the pages go bye bye?
-  __invept(VMX_EPT_EXTENT_GLOBAL, 0, 0);
+  //__invept(VMX_EPT_EXTENT_GLOBAL, 0, 0);
 
   // load the backing store
   vmcs_writel(GUEST_RFLAGS, vcpu->rflags);
@@ -801,7 +802,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
   unsigned long exit_reason = 0;
   unsigned long error, entry_error;
   vcpu->kvm_vcpu->exit_reason = 0;
-  while (cont && (maxcont++) < 5000) {
+  while (cont && (maxcont++) < 1000) {
     unsigned long intr_info = 0;
 
     if (exit_reason == EXIT_REASON_PENDING_INTERRUPT) {
@@ -1042,7 +1043,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       ret = 0;
       break;
     case KVM_SET_PIT:
-      //printf("KVM_SET_PIT\n");
+      printf("KVM_SET_PIT\n");
       ret = 0;
       break;
     /* FPU */
