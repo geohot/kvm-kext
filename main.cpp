@@ -97,6 +97,9 @@ struct vcpu {
   unsigned long *pml4;
 
   struct kvm_pit_state pit_state;
+  struct kvm_irqchip irqchip;
+
+  int paging;
 };
 
 // TODO: shouldn't be global
@@ -347,11 +350,13 @@ static int handle_cr(struct vcpu *vcpu) {
       vmcs_writel(GUEST_CR0, val);
       if (val & (1 << 31)) {
         printf("paging is on\n");
+        vcpu->paging = 1;
         // no unrestricted mode
         vmcs_write32(SECONDARY_VM_EXEC_CONTROL, vmcs_read32(SECONDARY_VM_EXEC_CONTROL) & ~SECONDARY_EXEC_UNRESTRICTED_GUEST);
         vmcs_write64(CR0_READ_SHADOW, (1 << 31));
       } else {
         printf("paging is off\n");
+        vcpu->paging = 0;
         // unrestricted mode
         vmcs_write32(SECONDARY_VM_EXEC_CONTROL, vmcs_read32(SECONDARY_VM_EXEC_CONTROL) | SECONDARY_EXEC_UNRESTRICTED_GUEST);
         vmcs_write64(CR0_READ_SHADOW, 0);
@@ -859,9 +864,14 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
       // interrupt injection?
       for (i = 0; i < IRQ_MAX; i++) {
         if (vcpu->pending_irq & (1<<i)) {
-          //printf("delivering IRQ %d rflags %lx\n", i, vcpu->rflags);
+          if (i != 6) printf("delivering IRQ %d rflags %lx\n", i, vcpu->rflags);
           // vm exits clear the valid bit, no need to do by hand
-          intr_info = INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR | (i+8);
+          if (vcpu->paging) {
+            // is this the right place?
+            intr_info = INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR | (i+0x20);
+          } else {
+            intr_info = INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR | (i+8);
+          }
           vcpu->pending_irq &= ~(1<<i);
           break;
         }
@@ -995,6 +1005,30 @@ static int kvm_set_pit(struct vcpu *vcpu) {
   return 0;
 }
 
+static int kvm_set_irqchip(struct vcpu *vcpu) {
+  printf("set irqchip %d\n", vcpu->irqchip.chip.pic.irq_base);
+  return 0;
+}
+
+#define MSR_IA32_TSCDEADLINE            0x000006e0
+#define MSR_IA32_TSC_ADJUST             0x0000003b
+
+static int kvm_get_msr_index_list(struct kvm_msr_list *msr_list) {
+  static const u32 emulated_msrs[] = {
+    MSR_IA32_TSC_ADJUST,
+    MSR_IA32_TSCDEADLINE,
+    MSR_IA32_MISC_ENABLE,
+    MSR_IA32_MCG_STATUS,
+    MSR_IA32_MCG_CTL,
+  };
+
+  if (msr_list->nmsrs < ARRAY_SIZE(emulated_msrs)) return E2BIG;
+  msr_list->nmsrs = ARRAY_SIZE(emulated_msrs);
+
+  copyout(emulated_msrs, msr_list->self + offsetof(struct kvm_msr_list, indices), msr_list->nmsrs * sizeof(u32));
+  return 0;
+}
+
 
 /* *********************** */
 /* device functions */
@@ -1068,7 +1102,9 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
         ret = 1;
       } else if (test == KVM_CAP_SET_TSS_ADDR || test == KVM_CAP_EXT_CPUID || test == KVM_CAP_MP_STATE) {
         ret = 1;
-      } else if (test == KVM_CAP_SYNC_MMU) {
+      } else if (test == KVM_CAP_SYNC_MMU || test == KVM_CAP_TSC_CONTROL) {
+        ret = 1;
+      } else if (test == KVM_CAP_DESTROY_MEMORY_REGION_WORKS || test == KVM_CAP_JOIN_MEMORY_REGIONS_WORKS) {
         ret = 1;
       } else {
         // most extensions aren't available
@@ -1078,7 +1114,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
     // unimplemented
     case KVM_GET_MSR_INDEX_LIST:
       // struct kvm_msr_list
-      ret = 0;
+      ret = kvm_get_msr_index_list((struct kvm_msr_list *)pData);
       break;
     case KVM_GET_SUPPORTED_CPUID:
       ret = kvm_get_supported_cpuid((struct kvm_cpuid2 *)pData);
@@ -1110,12 +1146,19 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
     case KVM_CREATE_IRQCHIP:
       ret = 0;
       break;
+    case KVM_GET_IRQCHIP:
+      memcpy(pData, &vcpu->irqchip, sizeof(struct kvm_irqchip));
+      break;
+    case KVM_SET_IRQCHIP:
+      memcpy(&vcpu->irqchip, pData, sizeof(struct kvm_irqchip));
+      ret = kvm_set_irqchip(vcpu);
+      break;
     case KVM_IRQ_LINE:
       ret = kvm_irq_line(vcpu, (struct kvm_irq_level *)pData);
       break;
     /* PIT */
     case KVM_CREATE_PIT:
-      printf("KVM_CREATE_PIT\n");
+      //printf("KVM_CREATE_PIT\n");
       ret = 0;
       break;
     case KVM_GET_PIT:
@@ -1127,7 +1170,10 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       memcpy(&vcpu->pit_state, pData, sizeof(struct kvm_pit_state));
       ret = kvm_set_pit(vcpu);
       break;
-    /* FPU */
+    /* TODO: FPU */
+    case KVM_GET_FPU:
+      ret = 0;
+      break;
     case KVM_SET_FPU:
       ret = 0;
       break;
