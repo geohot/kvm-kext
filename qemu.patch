@@ -1,0 +1,82 @@
+diff -rupN qemu-2.2.0-original/hw/i386/kvm/i8254.c qemu-2.2.0/hw/i386/kvm/i8254.c
+--- qemu-2.2.0-original/hw/i386/kvm/i8254.c	2014-12-09 09:45:41.000000000 -0500
++++ qemu-2.2.0/hw/i386/kvm/i8254.c	2014-12-27 12:36:58.000000000 -0500
+@@ -28,6 +28,25 @@
+ #include "hw/timer/i8254_internal.h"
+ #include "sysemu/kvm.h"
+ 
++/* OS X doesn't have clock_gettime. We add it. */
++#ifdef __APPLE__
++#include <mach/clock.h>
++#include <mach/mach.h>
++
++#define CLOCK_MONOTONIC 1
++
++// from http://stackoverflow.com/questions/5167269/clock-gettime-alternative-in-mac-os-x
++void clock_gettime(int flags, struct timespec *ts) {
++  clock_serv_t cclock;
++  mach_timespec_t mts;
++  host_get_clock_service(mach_host_self(), CALENDAR_CLOCK, &cclock);
++  clock_get_time(cclock, &mts);
++  mach_port_deallocate(mach_task_self(), cclock);
++  ts->tv_sec = mts.tv_sec;
++  ts->tv_nsec = mts.tv_nsec;
++}
++#endif
++
+ #define KVM_PIT_REINJECT_BIT 0
+ 
+ #define CALIBRATION_ROUNDS   3
+diff -rupN qemu-2.2.0-original/kvm-all.c qemu-2.2.0/kvm-all.c
+--- qemu-2.2.0-original/kvm-all.c	2014-12-09 09:45:42.000000000 -0500
++++ qemu-2.2.0/kvm-all.c	2014-12-27 12:28:08.000000000 -0500
+@@ -40,6 +40,13 @@
+ 
+ #include "hw/boards.h"
+ 
++#ifdef __APPLE__
++#include "kvm-kext-fixes.h"
++#else 
++#define __ioctl ioctl
++#define __mmap mmap
++#endif
++
+ /* This check must be after config-host.h is included */
+ #ifdef CONFIG_EVENTFD
+ #include <sys/eventfd.h>
+@@ -271,7 +278,7 @@ int kvm_init_vcpu(CPUState *cpu)
+         goto err;
+     }
+ 
+-    cpu->kvm_run = mmap(NULL, mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED,
++    cpu->kvm_run = __mmap(NULL, mmap_size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                         cpu->kvm_fd, 0);
+     if (cpu->kvm_run == MAP_FAILED) {
+         ret = -errno;
+@@ -1861,7 +1868,7 @@ int kvm_ioctl(KVMState *s, int type, ...
+     va_end(ap);
+ 
+     trace_kvm_ioctl(type, arg);
+-    ret = ioctl(s->fd, type, arg);
++    ret = __ioctl(s->fd, type, arg);
+     if (ret == -1) {
+         ret = -errno;
+     }
+@@ -1879,7 +1886,7 @@ int kvm_vm_ioctl(KVMState *s, int type, 
+     va_end(ap);
+ 
+     trace_kvm_vm_ioctl(type, arg);
+-    ret = ioctl(s->vmfd, type, arg);
++    ret = __ioctl(s->vmfd, type, arg);
+     if (ret == -1) {
+         ret = -errno;
+     }
+@@ -1897,7 +1904,7 @@ int kvm_vcpu_ioctl(CPUState *cpu, int ty
+     va_end(ap);
+ 
+     trace_kvm_vcpu_ioctl(cpu->cpu_index, type, arg);
+-    ret = ioctl(cpu->kvm_fd, type, arg);
++    ret = __ioctl(cpu->kvm_fd, type, arg);
+     if (ret == -1) {
+         ret = -errno;
+     }
