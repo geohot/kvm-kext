@@ -1,7 +1,8 @@
 kvm-kext
 ========
 
-An implementation of the kvm interface on OS X. Exposes /dev/kvm in almost the same way Linux does.
+An implementation of the kvm interface on OS X.
+Exposes /dev/kvm in almost the same way Linux does.
 
 Released under GPLv2. Helper functions borrowed from the Linux Kernel.
 
