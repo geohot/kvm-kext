@@ -1,12 +1,10 @@
-
+kvm-kext
 ========
 
 An implementation of the kvm interface on OS X.
-Exposes /dev/kvm in almost the same way Linux does.
+Exposes /dev/kvm in almost the same way Linux does(see below for differences).
 
-Project for 15-412 by George Hotz.
-
-Released under GPLv2. Helper functions borrowed from the Linux Kernel.
+Project for 15-412 by George Hotz. Released under GPLv2. Helper functions borrowed from the Linux Kernel.
 
 Description
 -----------
