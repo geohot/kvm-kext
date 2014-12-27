@@ -7,6 +7,8 @@ Exposes /dev/kvm in almost the same way Linux does(see below for differences).
 Project for 15-412 by George Hotz. Released under GPLv2. Helper functions borrowed from the Linux Kernel.
 Currently capable of booting the virtual Linux system in bintest/bootfd.img.
 
+Do not rely on this for any sort of secure virtualization. /dev/kvm is currently world owned.
+
 Description
 -----------
 
