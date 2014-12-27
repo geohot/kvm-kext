@@ -59,5 +59,5 @@ Known Issues
 * Currrently, only one VM is supported because vcpu is global. Should be an easy fix.
 * APICs and DRs don't work at all.
 * Much of the API is still unimplemented.
-* QEMU VGA doesn't seem to work, unsure why.
+* QEMU VGA doesn't seem to work, unsure why. MMIO?
 
