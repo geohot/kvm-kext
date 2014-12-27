@@ -875,7 +875,7 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
       // interrupt injection?
       for (i = 0; i < IRQ_MAX; i++) {
         if (vcpu->pending_irq & (1<<i)) {
-          if (i != 0 && i != 6) printf("delivering IRQ %d rflags %lx\n", i, vcpu->rflags);
+          //if (i != 0 && i != 6) printf("delivering IRQ %d rflags %lx\n", i, vcpu->rflags);
           // vm exits clear the valid bit, no need to do by hand
           if (vcpu->paging) {
             // is this the right place?  it's 0x20 for 410 kernels, perhaps linux is different
@@ -1059,13 +1059,16 @@ struct state {
   int initted;
 
   lck_grp_attr_t *mp_lock_grp_attr;
-  lck_grp_t  *mp_lock_grp;
+  lck_grp_t *mp_lock_grp;
+
+  struct proc *process;
 } __state;
 
 // shouldn't be global
 struct state *state = &__state;
 
 static int kvm_dev_open(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
+  printf("kvm_dev_open: %p\n", pProcess);
   if (state->initted == 0) {
     state->ioctl_lock = IOLockAlloc();
     state->irq_lock = IOLockAlloc();
@@ -1074,11 +1077,13 @@ static int kvm_dev_open(dev_t Dev, int fFlags, int fDevType, struct proc *pProce
     state->mp_lock_grp = lck_grp_alloc_init("vmx", state->mp_lock_grp_attr);
 
     state->initted = 1;
+    state->process = pProcess;
   }
   return 0;
 }
 
 static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
+  printf("kvm_dev_close: %p\n", pProcess);
   return 0;
 }
 

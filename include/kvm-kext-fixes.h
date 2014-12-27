@@ -2,7 +2,7 @@
 #include <sys/types.h>
 #include <sys/ioctl.h>
 
-int __ioctl(int fd, unsigned int type, void *arg) {
+static int __ioctl(int fd, unsigned int type, void *arg) {
   if (type == KVM_SET_CPUID || type == KVM_SET_CPUID2 || type == KVM_SET_MSRS ||
       type == KVM_GET_MSRS || type == KVM_GET_MSR_INDEX_LIST ||
       type == KVM_GET_SUPPORTED_CPUID) {
@@ -19,7 +19,7 @@ int __ioctl(int fd, unsigned int type, void *arg) {
 }
 
 // TODO: we don't even try here to make this anything like mmap
-void *__mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset) {
+static void *__mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset) {
   void *ret = NULL;
   __ioctl(fd, KVM_MMAP_VCPU, &ret);
   return ret;
