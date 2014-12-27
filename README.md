@@ -5,6 +5,7 @@ An implementation of the kvm interface on OS X.
 Exposes /dev/kvm in almost the same way Linux does(see below for differences).
 
 Project for 15-412 by George Hotz. Released under GPLv2. Helper functions borrowed from the Linux Kernel.
+Currently capable of booting a virtual Linux system in bintest/bootfd.img.
 
 Description
 -----------
@@ -19,7 +20,8 @@ Usage
 Installing KEXT
 
 * ./build.sh should build and install the kext
-* See https://github.com/Homebrew/homebrew/issues/31164 for issues with 10.10 
+* See https://github.com/Homebrew/homebrew/issues/31164 for cause of issues with 10.10 
+* Use "nvram boot-args=kext-dev-mode=1" to fix. This is a dangerous command.
 * Currently doesn't codesign since the above fix doesn't require it.
 
 Installing QEMU
@@ -35,9 +37,9 @@ Differences from Linux API
 * The ioctl's with a 0 length array as the last parameter have to also pass in their user space address.
 * KVM_SET_PIT and KVM_SET_IRQCHIP incorrectly used IOR in the Linux header, so the numbers don't match Linux.
 
-See tests/common.h for an __ioctl that fixes these things
-
 mmaping of drivers is not allowed in OS X, so we add an ioctl KVM_MMAP_VCPU to behave like mmaping the VCPU.
+
+See include/kvm-kext-fixes.h for fixes to these issues
 
 Known Issues
 ------------
@@ -51,5 +53,4 @@ Known Issues
 * APICs and DRs don't work at all.
 * Much of the API is still unimplemented.
 * QEMU VGA doesn't seem to work, unsure why.
-
 

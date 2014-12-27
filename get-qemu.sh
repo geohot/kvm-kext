@@ -9,7 +9,7 @@ fi
 
 pushd .
 cd qemu-2.2.0
-./configure --target-list=i386-softmmu --enable-kvm --enable-trace-backend=stderr
-
+./configure --target-list=i386-softmmu --enable-kvm --enable-trace-backend=stderr --extra-cflags="-I $(pwd)/../include"
+make -j8
 popd
 
