@@ -1,8 +1,10 @@
-kvm-kext
+
 ========
 
 An implementation of the kvm interface on OS X.
 Exposes /dev/kvm in almost the same way Linux does.
+
+Project for 15-412 by George Hotz.
 
 Released under GPLv2. Helper functions borrowed from the Linux Kernel.
 
@@ -50,5 +52,6 @@ Known Issues
 * Currrently, only one VM is supported because vcpu is global. Should be an easy fix.
 * APICs and DRs don't work at all.
 * Much of the API is still unimplemented.
+* QEMU VGA doesn't seem to work, unsure why.
 
 
