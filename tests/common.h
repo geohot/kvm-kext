@@ -8,8 +8,10 @@
 #include <errno.h>
 
 int __ioctl(int fd, unsigned int type, void *arg) {
-  if (type == KVM_SET_CPUID || type == KVM_SET_CPUID2 || type == KVM_SET_MSRS || type == KVM_GET_MSRS || type == KVM_GET_MSR_INDEX_LIST) {
-    // we need the user pointer to copyin the rest of the data not in the ioctl sizeof
+  if (type == KVM_SET_CPUID || type == KVM_SET_CPUID2 || type == KVM_SET_MSRS ||
+      type == KVM_GET_MSRS || type == KVM_GET_MSR_INDEX_LIST ||
+      type == KVM_GET_SUPPORTED_CPUID) {
+    // need user pointer to copyin the rest of the data not in the ioctl sizeof
     *(__u64 *)arg = (__u64)arg;
   }
 
@@ -23,8 +25,7 @@ int __ioctl(int fd, unsigned int type, void *arg) {
   return ret;
 }
 
-int kvm_ioctl(int fd, int type, ...)
-{
+int kvm_ioctl(int fd, int type, ...) {
   int ret;
   void *arg;
   va_list ap;

@@ -7,6 +7,7 @@
 #define __ex_clear(x,y) x
 #define test_bit(x,y) (((1<<x) & *y) != 0)
 #define unlikely(x) x
+#define __pa vmx_paddr
 
 enum kvm_reg {
 	VCPU_REGS_RAX = 0,

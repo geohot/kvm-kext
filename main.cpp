@@ -20,16 +20,14 @@ static lck_grp_attr_t *mp_lock_grp_attr;
 #define LOAD_VMCS(vcpu) { lck_spin_lock(vcpu->ioctl_lock); vmcs_load(vcpu->vmcs); vcpu->vmcs_loaded = 1; }
 #define RELEASE_VMCS(vcpu) { vmcs_clear(vcpu->vmcs); lck_spin_unlock(vcpu->ioctl_lock); vcpu->vmcs_loaded = 0; }
 
-#define __ex(x) x
-#define __pa vmx_paddr
-
 #include <asm/uapi_vmx.h>
 #include <linux/kvm.h>
-#include "kvm_host.h"
+
+#include "kvm_host.h"        // register enums
 #include "vmx_shims.h"       // vmcs allocation functions
 #include "vmcs.h"            // vmcs read and write
 #include "seg_base.h"        // functions for getting segment base
-#include "vmx_segments.h"
+#include "vmx_segments.h"    // functions for vmcs setting segments
 
 // where is this include file?
 extern "C" {
@@ -1173,7 +1171,6 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       break;
     case KVM_SET_IRQCHIP:
       // BUG: this was broken because IOR was used instead of IOW
-      // stupid linux people
       memcpy(&vcpu->irqchip, pData, sizeof(struct kvm_irqchip));
       ret = kvm_set_irqchip(vcpu);
       break;
@@ -1192,7 +1189,6 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       break;
     case KVM_SET_PIT:
       // BUG: this was broken because IOR was used instead of IOW
-      // stupid linux people
       memcpy(&vcpu->pit_state, pData, sizeof(struct kvm_pit_state));
       ret = kvm_set_pit(vcpu);
       break;
