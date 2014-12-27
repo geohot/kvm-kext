@@ -1,3 +1,6 @@
+// Part of kvm-kext by George Hotz
+// Released under GPLv2
+
 #include <sys/proc.h>
 #include <libkern/libkern.h>
 #include <mach/mach_types.h>
