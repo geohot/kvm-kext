@@ -13,6 +13,19 @@ kvm (for Kernel-based Virtual Machine) is an interface to run virtual machines w
 kvm-kext implements enough of the kvm API to run Linux accelerated by Intel VMX on OS X.
 * https://www.kernel.org/doc/Documentation/virtual/kvm/api.txt
 
+Usage
+-----
+
+Installing KEXT
+
+* ./build.sh should build and install the kext
+* See https://github.com/Homebrew/homebrew/issues/31164 for issues with 10.10 
+* Currently doesn't codesign since the above fix doesn't require it.
+
+Installing QEMU
+
+* Coming soon
+
 Differences from Linux API
 --------------------------
 

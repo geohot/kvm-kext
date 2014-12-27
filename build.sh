@@ -17,7 +17,7 @@ sudo rm -rf /tmp/kvm.kext
 cp -rp kvm.kext /tmp/
 
 # codesign
-codesign -v -s "George Hotz" /tmp/kvm.kext
+#codesign -v -s "George Hotz" /tmp/kvm.kext
 
 # set permissions
 sudo chown -R root:wheel /tmp/kvm.kext
