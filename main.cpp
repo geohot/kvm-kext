@@ -16,10 +16,6 @@
 #include <IOKit/IOMemoryDescriptor.h>
 #include <i386/vmx.h>
 
-static lck_grp_t  *mp_lock_grp;
-static lck_attr_t *mp_lock_attr;
-static lck_grp_attr_t *mp_lock_grp_attr;
-
 #define LOAD_VMCS(vcpu) { lck_spin_lock(vcpu->ioctl_lock); vmcs_load(vcpu->vmcs); vcpu->vmcs_loaded = 1; }
 #define RELEASE_VMCS(vcpu) { vmcs_clear(vcpu->vmcs); lck_spin_unlock(vcpu->ioctl_lock); vcpu->vmcs_loaded = 0; }
 
@@ -102,9 +98,6 @@ struct vcpu {
 
   int paging;
 };
-
-// TODO: shouldn't be global
-struct vcpu *global_vcpu;
 
 /* *********************** */
 /* ept functions */
@@ -1057,7 +1050,31 @@ static int kvm_get_msr_index_list(struct kvm_msr_list *msr_list) {
 /* device functions */
 /* *********************** */
 
+struct state {
+  struct vcpu *vcpu;
+
+  IOLock *ioctl_lock;
+  IOLock *irq_lock;
+  
+  int initted;
+
+  lck_grp_attr_t *mp_lock_grp_attr;
+  lck_grp_t  *mp_lock_grp;
+} __state;
+
+// shouldn't be global
+struct state *state = &__state;
+
 static int kvm_dev_open(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
+  if (state->initted == 0) {
+    state->ioctl_lock = IOLockAlloc();
+    state->irq_lock = IOLockAlloc();
+
+    state->mp_lock_grp_attr = lck_grp_attr_alloc_init();
+    state->mp_lock_grp = lck_grp_alloc_init("vmx", state->mp_lock_grp_attr);
+
+    state->initted = 1;
+  }
   return 0;
 }
 
@@ -1065,21 +1082,18 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
   return 0;
 }
 
-lck_mtx_t *big_ioctl_lock = NULL;
-lck_mtx_t *big_ioctl_lock2 = NULL;
-
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   int ret = EOPNOTSUPP;
   int test;
-  struct vcpu *vcpu = global_vcpu;
+  struct vcpu *vcpu = state->vcpu;
 
   iCmd &= 0xFFFFFFFF;
   IOMemoryDescriptor *md;
   IOMemoryMap *mm;
 
   // irqs must be async
-  if (iCmd != KVM_IRQ_LINE) lck_mtx_lock(big_ioctl_lock);
-  else lck_mtx_lock(big_ioctl_lock2);
+  if (iCmd != KVM_IRQ_LINE) IOLockLock(state->ioctl_lock);
+  else IOLockLock(state->irq_lock);
 
   // saw 0x14 once?
   if (pData == NULL || (u64)pData < PAGE_SIZE) goto fail;
@@ -1094,8 +1108,8 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       vcpu = (struct vcpu *)IOMalloc(sizeof(struct vcpu));
       bzero(vcpu, sizeof(struct vcpu));
 
-      // TODO: no global!
-      global_vcpu = vcpu;
+      // set this vcpu in the state
+      state->vcpu = vcpu;
 
       // assign an fd, must be a system fd
       // can't do this
@@ -1106,7 +1120,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       vcpu->kvm_vcpu = (struct kvm_run *)IOMallocAligned(VCPU_SIZE, PAGE_SIZE);
       vcpu->pio_data = ((unsigned char *)vcpu->kvm_vcpu + KVM_PIO_PAGE_OFFSET * PAGE_SIZE);
       vcpu->pending_io = 0;
-      vcpu->ioctl_lock = lck_spin_alloc_init(mp_lock_grp, mp_lock_attr);
+      vcpu->ioctl_lock = lck_spin_alloc_init(state->mp_lock_grp, LCK_ATTR_NULL);
       bzero(vcpu->kvm_vcpu, VCPU_SIZE);
       vmcs_clear(vcpu->vmcs);
 
@@ -1255,8 +1269,9 @@ fail:
     printf("%d %p get ioctl %lX with pData %p return %d\n", cpu_number(), pProcess, iCmd, pData, ret);
   }
 
-  if (iCmd != KVM_IRQ_LINE) lck_mtx_unlock(big_ioctl_lock);
-  else lck_mtx_unlock(big_ioctl_lock2);
+
+  if (iCmd != KVM_IRQ_LINE) IOLockUnlock(state->ioctl_lock);
+  else IOLockUnlock(state->irq_lock);
 
   return ret;
 }
@@ -1276,7 +1291,7 @@ static struct cdevsw kvm_functions = {
   /*.d_reset    = */eno_reset,
   /*.d_ttys     = */NULL,
   /*.d_select   = */eno_select,
-// OS X does not support memory-mapped devices through the mmap() function. Fuckers.
+// OS X does not support memory-mapped devices through the mmap() function.
   /*.d_mmap     = */eno_mmap,
   /*.d_strategy = */eno_strat,
   /*.d_getc     = */eno_getc,
@@ -1290,14 +1305,6 @@ static void *g_kvm_ctl;
 kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
   int ret;
   printf("MyKext has started.\n");
-
-
-  big_ioctl_lock = (lck_mtx_t *)IOLockAlloc();
-  big_ioctl_lock2 = (lck_mtx_t *)IOLockAlloc();
-
-  mp_lock_grp_attr = lck_grp_attr_alloc_init();
-  mp_lock_grp = lck_grp_alloc_init("vmx", mp_lock_grp_attr);
-  mp_lock_attr = lck_attr_alloc_init();
 
   ret = host_vmxon(FALSE);
   printf("host_vmxon: %d\n", ret);
