@@ -7,6 +7,8 @@
 #include <stdarg.h>
 #include <errno.h>
 
+#include "kvm-kext-fixes.h"
+
 int kvm_ioctl(int fd, int type, ...) {
   int ret;
   void *arg;

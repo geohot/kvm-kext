@@ -24,9 +24,10 @@ Installing KEXT
 * Use "nvram boot-args=kext-dev-mode=1" to fix. This is a dangerous command.
 * Currently doesn't codesign since the above fix doesn't require it.
 
-Installing QEMU
+Building QEMU with kvm support
 
-* Coming soon
+* ./get-qemu.sh should just work, doesn't install
+* Based on qemu-2.2.0 and makes two minor patches
 
 Differences from Linux API
 --------------------------
