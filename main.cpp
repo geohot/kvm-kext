@@ -23,11 +23,11 @@ static lck_grp_attr_t *mp_lock_grp_attr;
 #include <asm/uapi_vmx.h>
 #include <linux/kvm.h>
 
-#include "kvm_host.h"        // register enums
-#include "vmx_shims.h"       // vmcs allocation functions
-#include "vmcs.h"            // vmcs read and write
-#include "seg_base.h"        // functions for getting segment base
-#include "vmx_segments.h"    // functions for vmcs setting segments
+#include "helpers/kvm_host.h"        // register enums
+#include "helpers/vmx_shims.h"       // vmcs allocation functions
+#include "helpers/vmcs.h"            // vmcs read and write
+#include "helpers/seg_base.h"        // functions for getting segment base
+#include "helpers/vmx_segments.h"    // functions for vmcs setting segments
 
 // where is this include file?
 extern "C" {
