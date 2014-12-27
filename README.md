@@ -5,13 +5,13 @@ An implementation of the kvm interface on OS X.
 Exposes /dev/kvm in almost the same way Linux does(see below for differences).
 
 Project for 15-412 by George Hotz. Released under GPLv2. Helper functions borrowed from the Linux Kernel.
-Currently capable of booting a virtual Linux system in bintest/bootfd.img.
+Currently capable of booting the virtual Linux system in bintest/bootfd.img.
 
 Description
 -----------
 
 kvm (for Kernel-based Virtual Machine) is an interface to run virtual machines with acceleration by the hardware.
-kvm-kext implements enough of the kvm API to run Linux accelerated by Intel VMX on OS X.
+kvm-kext implements enough of the kvm API to run 32-bit Linux accelerated by Intel VMX on OS X.
 * https://www.kernel.org/doc/Documentation/virtual/kvm/api.txt
 
 Usage
@@ -28,6 +28,10 @@ Building QEMU with kvm support
 
 * ./get-qemu.sh should just work, doesn't install
 * Based on qemu-2.2.0 and makes two minor patches
+
+Booting Test Linux
+
+* ./test.sh
 
 Differences from Linux API
 --------------------------
