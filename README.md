@@ -11,7 +11,7 @@ Description
 -----------
 
 kvm (for Kernel-based Virtual Machine) is an interface to run virtual machines with acceleration by the hardware.
-kvm-kext implements enough of the kvm API to run 32-bit Linux accelerated by Intel VMX on OS X.
+kvm-kext implements enough of the kvm API to run 32-bit Linux accelerated by Intel VMX on OS X and put a console on a serial port.
 * https://www.kernel.org/doc/Documentation/virtual/kvm/api.txt
 
 Usage
