@@ -314,6 +314,11 @@ static int handle_preemption_timer(struct vcpu *vcpu) {
 }
 
 static int handle_external_interrupt(struct vcpu *vcpu) {
+  // run the guest timer in lockstep with the host
+  if (vcpu->exit_qualification == 0) {
+    vcpu->pending_irq |= 1;
+  }
+
   // check for signal to process
   sigset_t tmp;
   sigfillset(&tmp);
@@ -459,8 +464,7 @@ void init_host_values() {
 }
 
 static void vcpu_init(struct vcpu *vcpu) {
-  //vmcs_write32(EXCEPTION_BITMAP, 0);
-  vmcs_write32(EXCEPTION_BITMAP, (1 << 6));
+  vmcs_write32(EXCEPTION_BITMAP, 0);
 
   vmcs_writel(EPT_POINTER, __pa(vcpu->pml4) | (3 << 3));
 
@@ -668,8 +672,6 @@ void kvm_run(struct vcpu *vcpu) {
   init_host_values();
 
 	asm(
-    //"call _init_host_values\n\t"
-
 		/* Store host registers */
 		"push %%rdx\n\tpush %%rbp\n\t"
 		"push %%rcx \n\t" /* placeholder for guest rcx */
@@ -898,11 +900,6 @@ static int kvm_run_wrapper(struct vcpu *vcpu) {
       }
     }
 
-    if (exit_reason == EXIT_REASON_EXTERNAL_INTERRUPT) {
-      // hacks for the timer
-      vcpu->pending_irq |= 1;
-    }
-
     LOAD_VMCS(vcpu);
 
     if (intr_info != 0) {
@@ -1082,6 +1079,10 @@ struct state *head_of_state = NULL;
 struct state *state_find(struct proc *pProcess) {
   struct state *state = head_of_state;
   while (state != NULL) {
+    if ((unsigned long)state < PAGE_SIZE) {
+      printf("WTF HOW DID THIS HAPPEN\n");
+      return NULL;
+    }
     if (state->process == pProcess) return state;
     state = state->next;
   }
@@ -1144,6 +1145,8 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
   } else {
     IOLockUnlock(state_lock);
   }
+
+  printf("head_of_state: %p\n", head_of_state);
 
   return 0;
 }
