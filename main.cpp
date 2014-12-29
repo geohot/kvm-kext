@@ -1140,7 +1140,7 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
     IOLockUnlock(state_lock);
 
     // TODO: a lot more freeing here
-    ////IOFree(state);
+    //IOFree(state);
   } else {
     IOLockUnlock(state_lock);
   }
