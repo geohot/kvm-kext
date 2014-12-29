@@ -51,12 +51,11 @@ See include/kvm-kext-fixes.h for fixes to these issues
 Known Issues
 ------------
 
-* The timer interrupt is generated using a horrible hack, it's sent whenever the host gets an interrupt.
+* The timer interrupt is generated using the host timer. Is this correct behavior?
 * There's still a bug causing a kernel panic sometimes, mitigated somewhat by a big mutex and disabling
   interrupts in kvm_irq_line. Don't know why this fixes it.
 * All memory passed into KVM_SET_USER_MEMORY_REGION is wired in when that ioctl is run.
 * The FPU is unimplemented, might leak state between host and guest?
-* Currrently, only one VM is supported because vcpu is global. Should be an easy fix.
 * APICs and DRs don't work at all.
 * Much of the API is still unimplemented.
 * QEMU VGA doesn't seem to work, unsure why. MMIO?
