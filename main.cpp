@@ -33,6 +33,19 @@ extern "C" {
 extern int cpu_number(void);
 }
 
+// why aren't these built in to IOKit?
+void *IOCalloc(vm_size_t size) {
+  void *ret = IOMalloc(size);
+  if (ret != NULL) bzero(ret, size);
+  return ret;
+}
+
+void *IOCallocAligned(vm_size_t size, vm_size_t alignment) {
+  void *ret = IOMallocAligned(size, alignment);
+  if (ret != NULL) bzero(ret, size);
+  return ret;
+}
+
 #define VCPU_SIZE (PAGE_SIZE*2)
 #define KVM_PIO_PAGE_OFFSET 1
 
@@ -105,8 +118,7 @@ struct vcpu {
 
 static void ept_init(struct vcpu *vcpu) {
   // EPT allocation
-	vcpu->pml4 = (unsigned long *)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
-	bzero(vcpu->pml4, PAGE_SIZE*2);
+	vcpu->pml4 = (unsigned long *)IOCallocAligned(PAGE_SIZE*2, PAGE_SIZE);
 }
 
 #define PAGE_OFFSET 512
@@ -141,8 +153,7 @@ static void ept_add_page(struct vcpu *vcpu, unsigned long virtual_address, unsig
   // allocate the pdpt in the pml4 if NULL
   pdpt = (unsigned long*)vcpu->pml4[PAGE_OFFSET + pml4_idx];
   if (pdpt == NULL) {
-    pdpt = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
-    bzero(pdpt, PAGE_SIZE*2);
+    pdpt = (unsigned long*)IOCallocAligned(PAGE_SIZE*2, PAGE_SIZE);
     vcpu->pml4[PAGE_OFFSET + pml4_idx] = (unsigned long)pdpt;
     vcpu->pml4[pml4_idx] = __pa(pdpt) | EPT_DEFAULTS;
   }
@@ -150,8 +161,7 @@ static void ept_add_page(struct vcpu *vcpu, unsigned long virtual_address, unsig
   // allocate the pd in the pdpt
   pd = (unsigned long*)pdpt[PAGE_OFFSET + pdpt_idx];
   if (pd == NULL) {
-    pd = (unsigned long*)IOMallocAligned(PAGE_SIZE*2, PAGE_SIZE);
-    bzero(pd, PAGE_SIZE*2);
+    pd = (unsigned long*)IOCallocAligned(PAGE_SIZE*2, PAGE_SIZE);
     pdpt[PAGE_OFFSET + pdpt_idx] = (unsigned long)pd;
     pdpt[pdpt_idx] = __pa(pd) | EPT_DEFAULTS;
   }
@@ -159,8 +169,7 @@ static void ept_add_page(struct vcpu *vcpu, unsigned long virtual_address, unsig
   // allocate the pt in the pd
   pt = (unsigned long*)pd[PAGE_OFFSET + pd_idx];
   if (pt == NULL) {
-    pt = (unsigned long*)IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
-    bzero(pt, PAGE_SIZE);
+    pt = (unsigned long*)IOCallocAligned(PAGE_SIZE, PAGE_SIZE);
     pd[PAGE_OFFSET + pd_idx] = (unsigned long)pt;
     pd[pd_idx] = __pa(pt) | EPT_DEFAULTS;
   }
@@ -455,11 +464,11 @@ static void vcpu_init(struct vcpu *vcpu) {
 
   vmcs_writel(EPT_POINTER, __pa(vcpu->pml4) | (3 << 3));
 
-  vcpu->virtual_apic_page = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+  vcpu->virtual_apic_page = IOCallocAligned(PAGE_SIZE, PAGE_SIZE);
 	bzero(vcpu->virtual_apic_page, PAGE_SIZE);
   vmcs_writel(VIRTUAL_APIC_PAGE_ADDR, __pa(vcpu->virtual_apic_page));
 
-  vcpu->apic_access = IOMallocAligned(PAGE_SIZE, PAGE_SIZE);
+  vcpu->apic_access = IOCallocAligned(PAGE_SIZE, PAGE_SIZE);
 	bzero(vcpu->apic_access, PAGE_SIZE);
   vmcs_writel(APIC_ACCESS_ADDR, __pa(vcpu->apic_access));
 
@@ -959,7 +968,7 @@ static int kvm_set_msrs(struct vcpu *vcpu, struct kvm_msrs *msrs) {
   //int i;
   printf("got %d msrs at %p\n", msrs->nmsrs, msrs);
   vcpu->msr_count = msrs->nmsrs;
-  vcpu->msrs = (struct kvm_msr_entry *)IOMalloc(vcpu->msr_count * sizeof(struct kvm_msr_entry));
+  vcpu->msrs = (struct kvm_msr_entry *)IOCalloc(vcpu->msr_count * sizeof(struct kvm_msr_entry));
   copyin(msrs->self + offsetof(struct kvm_msrs, entries), vcpu->msrs, vcpu->msr_count * sizeof(struct kvm_msr_entry));
 
   /*for (i = 0; i < vcpu->msr_count; i++) {
@@ -973,7 +982,7 @@ static int kvm_set_cpuid2(struct vcpu *vcpu, struct kvm_cpuid2 *cpuid2) {
   printf("got %d cpuids at %p\n", cpuid2->nent, cpuid2);
 
   vcpu->cpuid_count = cpuid2->nent;
-  vcpu->cpuids = (struct kvm_cpuid_entry2*)IOMalloc(vcpu->cpuid_count * sizeof(struct kvm_cpuid_entry2));
+  vcpu->cpuids = (struct kvm_cpuid_entry2*)IOCalloc(vcpu->cpuid_count * sizeof(struct kvm_cpuid_entry2));
   copyin(cpuid2->self + offsetof(struct kvm_cpuid2, entries), vcpu->cpuids, vcpu->cpuid_count * sizeof(struct kvm_cpuid_entry2));
 
   for (i = 0; i < vcpu->cpuid_count; i++) {
@@ -1051,45 +1060,104 @@ static int kvm_get_msr_index_list(struct kvm_msr_list *msr_list) {
 /* *********************** */
 
 struct state {
+  // linked list is fine, max 1 per process
+  struct state *next;
+  struct state *prev;
+  struct proc *process;
+  int open_count;
+
   struct vcpu *vcpu;
 
   IOLock *ioctl_lock;
   IOLock *irq_lock;
-  
-  int initted;
 
   lck_grp_attr_t *mp_lock_grp_attr;
   lck_grp_t *mp_lock_grp;
+};
 
-  struct proc *process;
-} __state;
+IOLock *state_lock;
+struct state *head_of_state = NULL;
 
-// shouldn't be global
-struct state *state = &__state;
+// must be called with state_lock held
+struct state *state_find(struct proc *pProcess) {
+  struct state *state = head_of_state;
+  while (state != NULL) {
+    if (state->process == pProcess) return state;
+    state = state->next;
+  }
+  return NULL;
+}
 
 static int kvm_dev_open(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
+  IOLockLock(state_lock);
+  struct state *state = state_find(pProcess);
+
+  // allocate a new state
+  if (state == NULL) {
+    state = (struct state *)IOCalloc(sizeof(struct state));
+    state->process = pProcess;
+
+    // insert at the front of the list
+    state->next = head_of_state;
+    if (head_of_state != NULL) head_of_state->prev = state;
+    head_of_state = state;
+  }
+  IOLockUnlock(state_lock);
+
+  state->open_count++;
+
   printf("kvm_dev_open: %p\n", pProcess);
-  if (state->initted == 0) {
+  if (state->open_count == 1) {
+    // just opened
     state->ioctl_lock = IOLockAlloc();
     state->irq_lock = IOLockAlloc();
 
     state->mp_lock_grp_attr = lck_grp_attr_alloc_init();
     state->mp_lock_grp = lck_grp_alloc_init("vmx", state->mp_lock_grp_attr);
-
-    state->initted = 1;
-    state->process = pProcess;
   }
   return 0;
 }
 
 static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
   printf("kvm_dev_close: %p\n", pProcess);
+  IOLockLock(state_lock);
+  struct state *state = state_find(pProcess);
+  if (state == NULL) {
+    IOLockUnlock(state_lock);
+  }
+
+  state->open_count--;
+
+  if (state->open_count == 0) {
+    if (state->prev == NULL) {
+      head_of_state = state->next;
+    } else {
+      state->prev->next = state->next;
+    }
+    if (state->next != NULL) {
+      state->next->prev = state->prev;
+    }
+    IOLockUnlock(state_lock);
+
+    // TODO: a lot more freeing here
+    ////IOFree(state);
+  } else {
+    IOLockUnlock(state_lock);
+  }
+
   return 0;
 }
 
 static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess) {
   int ret = EOPNOTSUPP;
   int test;
+
+  IOLockLock(state_lock);
+  struct state *state = state_find(pProcess);
+  IOLockUnlock(state_lock);
+
+  if (state == NULL) return ENOENT;
+
   struct vcpu *vcpu = state->vcpu;
 
   iCmd &= 0xFFFFFFFF;
@@ -1110,8 +1178,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       break;
     case KVM_CREATE_VM:
       DEBUG("create vm\n");
-      vcpu = (struct vcpu *)IOMalloc(sizeof(struct vcpu));
-      bzero(vcpu, sizeof(struct vcpu));
+      vcpu = (struct vcpu *)IOCalloc(sizeof(struct vcpu));
 
       // set this vcpu in the state
       state->vcpu = vcpu;
@@ -1122,7 +1189,7 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
 
       // init the one CPU as well
       vcpu->vmcs = allocate_vmcs();
-      vcpu->kvm_vcpu = (struct kvm_run *)IOMallocAligned(VCPU_SIZE, PAGE_SIZE);
+      vcpu->kvm_vcpu = (struct kvm_run *)IOCallocAligned(VCPU_SIZE, PAGE_SIZE);
       vcpu->pio_data = ((unsigned char *)vcpu->kvm_vcpu + KVM_PIO_PAGE_OFFSET * PAGE_SIZE);
       vcpu->pending_io = 0;
       vcpu->ioctl_lock = lck_spin_alloc_init(state->mp_lock_grp, LCK_ATTR_NULL);
@@ -1313,6 +1380,8 @@ kern_return_t MyKextStart(kmod_info_t *ki, void *d) {
 
   ret = host_vmxon(FALSE);
   printf("host_vmxon: %d\n", ret);
+
+  state_lock = IOLockAlloc();
 
   if (ret != 0) {
     return KMOD_RETURN_FAILURE;
