@@ -128,6 +128,30 @@ static void ept_init(struct vcpu *vcpu) {
 #define EPT_CACHE_WRITEBACK (6 << 3)
 #define EPT_DEFAULTS (VMX_EPT_EXECUTABLE_MASK | VMX_EPT_WRITABLE_MASK | VMX_EPT_READABLE_MASK)
 
+static void ept_free(struct vcpu *vcpu) {
+  unsigned long *pdpt, *pd, *pt;
+  int pml4_idx, pdpt_idx, pd_idx;
+  for (pml4_idx = 0; pml4_idx < PAGE_OFFSET; pml4_idx++) {
+    pdpt = (unsigned long*)vcpu->pml4[PAGE_OFFSET + pml4_idx];
+    if (pdpt == NULL) continue;
+    for (pdpt_idx = 0; pdpt_idx < PAGE_OFFSET; pdpt_idx++) {
+      pd = (unsigned long*)pdpt[PAGE_OFFSET + pdpt_idx];
+      if (pd == NULL) continue;
+      for (pd_idx = 0; pd_idx < PAGE_OFFSET; pd_idx++) {
+        pt = (unsigned long*)pd[PAGE_OFFSET + pd_idx];
+        if (pt == NULL) continue;
+        IOFree(pt, PAGE_SIZE);
+      }
+      IOFree(pd, PAGE_SIZE*2);
+    }
+    IOFree(pdpt, PAGE_SIZE*2);
+  }
+  IOFree(vcpu->pml4, PAGE_SIZE*2);
+
+  // the pages are still wired in in the process, they free when the process frees them
+}
+
+
 static unsigned long ept_translate(struct vcpu *vcpu, unsigned long virtual_address) {
   int pml4_idx = (virtual_address >> 39) & 0x1FF;
   int pdpt_idx = (virtual_address >> 30) & 0x1FF;
@@ -1155,6 +1179,8 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
     state->vcpu->mm->release();
     state->vcpu->md->release();
     IOFree(state->vcpu->kvm_vcpu, VCPU_SIZE);
+
+    ept_free(state->vcpu);
 
     IOFree(state->vcpu, sizeof(struct vcpu));
     IOLockFree(state->ioctl_lock);
