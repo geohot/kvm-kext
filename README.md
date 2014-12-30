@@ -59,5 +59,4 @@ Known Issues
 * APICs and DRs don't work at all.
 * Much of the API is still unimplemented.
 * QEMU VGA doesn't seem to work, unsure why. MMIO?
-* Nothing is freed ever.
 

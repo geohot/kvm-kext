@@ -68,7 +68,10 @@ extern const void* vmexit_handler;
 /* aggressively uniprocessor, one CREATE_VM = one processor */
 struct vcpu {
   vmcs *vmcs;
+
   struct kvm_run *kvm_vcpu;
+  IOMemoryDescriptor *md;
+  IOMemoryMap *mm;
 
   unsigned long regs[NR_VCPU_REGS];
   unsigned long rflags;
@@ -469,11 +472,9 @@ static void vcpu_init(struct vcpu *vcpu) {
   vmcs_writel(EPT_POINTER, __pa(vcpu->pml4) | (3 << 3));
 
   vcpu->virtual_apic_page = IOCallocAligned(PAGE_SIZE, PAGE_SIZE);
-	bzero(vcpu->virtual_apic_page, PAGE_SIZE);
   vmcs_writel(VIRTUAL_APIC_PAGE_ADDR, __pa(vcpu->virtual_apic_page));
 
   vcpu->apic_access = IOCallocAligned(PAGE_SIZE, PAGE_SIZE);
-	bzero(vcpu->apic_access, PAGE_SIZE);
   vmcs_writel(APIC_ACCESS_ADDR, __pa(vcpu->apic_access));
 
   // right?
@@ -1119,6 +1120,7 @@ static int kvm_dev_open(dev_t Dev, int fFlags, int fDevType, struct proc *pProce
   return 0;
 }
 
+// we assume this can't run with an ioctl in progress
 static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess) {
   printf("kvm_dev_close: %p\n", pProcess);
   IOLockLock(state_lock);
@@ -1141,7 +1143,24 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
     IOLockUnlock(state_lock);
 
     // TODO: a lot more freeing here
-    //IOFree(state);
+    IOFree(state->vcpu->virtual_apic_page, PAGE_SIZE);
+    IOFree(state->vcpu->apic_access, PAGE_SIZE);
+    IOFree(state->vcpu->vmcs, PAGE_SIZE);
+
+    IOFree(state->vcpu->msrs, state->vcpu->msr_count * sizeof(struct kvm_msr_entry));
+    IOFree(state->vcpu->cpuids, state->vcpu->cpuid_count * sizeof(struct kvm_cpuid_entry2));
+
+    // can be mmaped into user space
+    state->vcpu->mm->unmap();
+    state->vcpu->mm->release();
+    state->vcpu->md->release();
+    IOFree(state->vcpu->kvm_vcpu, VCPU_SIZE);
+
+    IOFree(state->vcpu, sizeof(struct vcpu));
+    IOLockFree(state->ioctl_lock);
+    IOLockFree(state->irq_lock);
+
+    IOFree(state, sizeof(struct state));
   } else {
     IOLockUnlock(state_lock);
   }
@@ -1164,8 +1183,6 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
   struct vcpu *vcpu = state->vcpu;
 
   iCmd &= 0xFFFFFFFF;
-  IOMemoryDescriptor *md;
-  IOMemoryMap *mm;
 
   // irqs must be async
   if (iCmd != KVM_IRQ_LINE) IOLockLock(state->ioctl_lock);
@@ -1196,7 +1213,6 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       vcpu->pio_data = ((unsigned char *)vcpu->kvm_vcpu + KVM_PIO_PAGE_OFFSET * PAGE_SIZE);
       vcpu->pending_io = 0;
       vcpu->ioctl_lock = lck_spin_alloc_init(state->mp_lock_grp, LCK_ATTR_NULL);
-      bzero(vcpu->kvm_vcpu, VCPU_SIZE);
       vmcs_clear(vcpu->vmcs);
 
       LOAD_VMCS(vcpu);
@@ -1317,10 +1333,10 @@ static int kvm_dev_ioctl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, stru
       ret = kvm_run_wrapper(vcpu);
       break;
     case KVM_MMAP_VCPU:
-      md = IOMemoryDescriptor::withAddressRange((mach_vm_address_t)vcpu->kvm_vcpu, VCPU_SIZE, kIODirectionInOut, kernel_task);
-      mm = md->createMappingInTask(current_task(), NULL, kIOMapAnywhere);
+      vcpu->md = IOMemoryDescriptor::withAddressRange((mach_vm_address_t)vcpu->kvm_vcpu, VCPU_SIZE, kIODirectionInOut, kernel_task);
+      vcpu->mm = vcpu->md->createMappingInTask(current_task(), NULL, kIOMapAnywhere);
       //DEBUG("mmaped at %p %p\n", *(mach_vm_address_t *)pData, mm->getAddress());
-      *(mach_vm_address_t *)pData = mm->getAddress();
+      *(mach_vm_address_t *)pData = vcpu->mm->getAddress();
       ret = 0;
       break;
     case KVM_SET_SIGNAL_MASK:
