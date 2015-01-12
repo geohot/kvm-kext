@@ -1,27 +1,27 @@
 // Part of kvm-kext by George Hotz
 // Released under GPLv2
 
+// normal includes
 #include <sys/proc.h>
-#include <libkern/libkern.h>
-#include <mach/mach_types.h>
 #include <sys/conf.h>
-#include <miscfs/devfs/devfs.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <kern/task.h>
 
-#include <IOKit/IOLib.h>
+// in Kernel.framework headers
 #include <IOKit/IOMemoryDescriptor.h>
-#include <i386/vmx.h>
+#include <i386/vmx.h>                // for host_vmxon and host_vmxoff
+#include <miscfs/devfs/devfs.h>
 
 #define LOAD_VMCS(vcpu) { lck_spin_lock(vcpu->ioctl_lock); vmcs_load(vcpu->vmcs); vcpu->vmcs_loaded = 1; }
 #define RELEASE_VMCS(vcpu) { vmcs_clear(vcpu->vmcs); lck_spin_unlock(vcpu->ioctl_lock); vcpu->vmcs_loaded = 0; }
 
+// includes from linux
 #include <asm/uapi_vmx.h>
 #include <linux/kvm.h>
 
+// code in these files
 #include "helpers/kvm_host.h"        // register enums
 #include "helpers/vmx_shims.h"       // vmcs allocation functions
 #include "helpers/vmcs.h"            // vmcs read and write
@@ -56,11 +56,6 @@ extern const void* vmexit_handler;
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
 
-//#include "vmx.h"
-//#include <linux/kvm_host.h>
-
-#include <sys/kernel.h>
-#include <kern/locks.h>
 #include <signal.h>
 
 #define IRQ_MAX 16
