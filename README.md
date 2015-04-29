@@ -26,6 +26,12 @@ Installing KEXT
 * Use "nvram boot-args=kext-dev-mode=1" to fix. This is a dangerous command.
 * Currently doesn't codesign since the above fix doesn't require it.
 
+Using homebrew to fetch QEMU build prerequisites
+
+* Install homebrew and run "brew doctor"
+* "brew install apple-gcc42"
+* "for i in $(brew deps qemu); do brew install $i; done"
+
 Building QEMU with kvm support
 
 * ./get-qemu.sh should just work, doesn't install

@@ -355,7 +355,6 @@ static int handle_external_interrupt(struct vcpu *vcpu) {
 
 static int handle_apic_access(struct vcpu *vcpu) {
   printf("apic access: %lx\n", vcpu->exit_qualification);
-  //return 0;
   // TODO: maybe actually do something here?
   skip_emulated_instruction(vcpu);
   return 1;
@@ -1161,7 +1160,6 @@ static int kvm_dev_close(dev_t Dev, int fFlags, int fDevType, struct proc *pProc
     }
     IOLockUnlock(state_lock);
 
-    // TODO: a lot more freeing here
     IOFree(state->vcpu->virtual_apic_page, PAGE_SIZE);
     IOFree(state->vcpu->apic_access, PAGE_SIZE);
     IOFree(state->vcpu->vmcs, PAGE_SIZE);
