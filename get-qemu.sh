@@ -1,7 +1,7 @@
 #!/bin/bash -e
 
 if [ ! -d qemu-2.2.0 ]; then
-  curl http://wiki.qemu-project.org/download/qemu-2.2.0.tar.bz2 > qemu-2.2.0.tar.bz2
+  curl -O http://wiki.qemu-project.org/download/qemu-2.2.0.tar.bz2
   tar xf qemu-2.2.0.tar.bz2
   rm qemu-2.2.0.tar.bz2
 fi
